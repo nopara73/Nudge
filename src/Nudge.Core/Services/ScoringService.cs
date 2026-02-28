@@ -6,6 +6,9 @@ namespace Nudge.Core.Services;
 
 public sealed partial class ScoringService(TimeProvider timeProvider) : IScoringService
 {
+    private const double ReachWeight = 0.35;
+    private const double FrequencyWeight = 0.25;
+    private const double NicheFitWeight = 0.40;
     private readonly TimeProvider _timeProvider = timeProvider;
 
     public IntentScore Score(Show show, IReadOnlyList<string> keywords)
@@ -13,7 +16,7 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         var reach = CalculateReach(show);
         var frequency = CalculateFrequency(show.Episodes);
         var nicheFit = CalculateNicheFit(show, keywords);
-        var score = Clamp01((reach * 0.4) + (frequency * 0.3) + (nicheFit * 0.3));
+        var score = Clamp01((reach * ReachWeight) + (frequency * FrequencyWeight) + (nicheFit * NicheFitWeight));
         var newest = show.Episodes
             .Where(e => e.PublishedAtUtc.HasValue)
             .OrderByDescending(e => e.PublishedAtUtc)

@@ -24,7 +24,7 @@ public sealed class ScoringServiceTests
         };
 
         var result = service.Score(show, ["ai", "startups"]);
-        var expected = (result.Reach * 0.4) + (result.Frequency * 0.3) + (result.NicheFit * 0.3);
+        var expected = (result.Reach * 0.35) + (result.Frequency * 0.25) + (result.NicheFit * 0.40);
 
         Assert.InRange(result.Reach, 0, 1);
         Assert.InRange(result.Frequency, 0, 1);
@@ -48,7 +48,7 @@ public sealed class ScoringServiceTests
         Assert.Equal(0.5, result.Reach, 10);
         Assert.Equal(0, result.Frequency, 10);
         Assert.Equal(0, result.NicheFit, 10);
-        Assert.Equal(0.2, result.Score, 10);
+        Assert.Equal(0.175, result.Score, 10);
     }
 }
 

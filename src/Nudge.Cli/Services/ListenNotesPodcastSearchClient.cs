@@ -45,16 +45,13 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
             try
             {
                 using var response = await _httpClient.SendAsync(request, cancellationToken);
-                Console.Error.WriteLine($"Podchaser status code: {(int)response.StatusCode}");
                 if (response.IsSuccessStatusCode)
                 {
                     var content = await response.Content.ReadAsStringAsync(cancellationToken);
                     var mapped = MapResults(content);
-                    Console.Error.WriteLine($"Podchaser result count: {mapped.Count}");
                     return mapped;
                 }
 
-                Console.Error.WriteLine("Podchaser result count: 0");
                 if (attempt == 0 && IsTransientStatusCode(response.StatusCode))
                 {
                     await DelayForRetryAsync(response, cancellationToken);

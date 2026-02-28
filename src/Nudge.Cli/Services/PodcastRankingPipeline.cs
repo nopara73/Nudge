@@ -11,6 +11,7 @@ public sealed class PodcastRankingPipeline(
     IScoringService scoringService,
     TimeProvider timeProvider)
 {
+    private const double MissingEmailPenalty = 0.03;
     private readonly IPodcastSearchClient _searchClient = searchClient;
     private readonly IRssFeedClient _feedClient = feedClient;
     private readonly IRssParser _rssParser = rssParser;
@@ -42,14 +43,19 @@ public sealed class PodcastRankingPipeline(
 
         var ordered = ranked
             .OrderByDescending(r => r.Score)
+            .ThenByDescending(r => r.NicheFit)
             .ThenByDescending(r => r.NewestEpisodePublishedAtUtc)
             .ThenBy(r => r.ShowName, StringComparer.OrdinalIgnoreCase)
+            .ThenBy(r => r.ShowId, StringComparer.Ordinal)
             .ToArray();
 
         return new RankingRunResult
         {
             Results = ordered,
-            Warnings = warnings,
+            Warnings = warnings
+                .Distinct(StringComparer.Ordinal)
+                .OrderBy(w => w, StringComparer.OrdinalIgnoreCase)
+                .ToArray(),
             Diagnostics = diagnostics
         };
     }
@@ -63,13 +69,14 @@ public sealed class PodcastRankingPipeline(
         CancellationToken cancellationToken)
     {
         var ranked = new List<RankedTarget>();
+        var missingContactShows = new List<string>();
         using var semaphore = new SemaphoreSlim(5, 5);
         var tasks = candidates.Select(async candidate =>
         {
             await semaphore.WaitAsync(cancellationToken);
             try
             {
-                var rankedTarget = await BuildRankedTargetAsync(candidate, keywords, thresholdUtc, applyRecencyFilter, cancellationToken);
+                var rankedTarget = await BuildRankedTargetAsync(candidate, keywords, thresholdUtc, applyRecencyFilter, missingContactShows, cancellationToken);
                 if (rankedTarget is not null)
                 {
                     lock (ranked)
@@ -82,7 +89,7 @@ public sealed class PodcastRankingPipeline(
             {
                 lock (warnings)
                 {
-                    warnings.Add($"Skipped '{candidate.Name}' after retry: {ex.Message}");
+                    warnings.Add($"Skipped '{candidate.Name}' feed after retry ({DescribeFailure(ex)}).");
                 }
             }
             finally
@@ -92,6 +99,19 @@ public sealed class PodcastRankingPipeline(
         });
 
         await Task.WhenAll(tasks);
+        if (missingContactShows.Count > 0)
+        {
+            var sampleShows = missingContactShows
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .Take(3)
+                .ToArray();
+            var sample = string.Join(", ", sampleShows.Select(name => $"'{name}'"));
+            var remainder = Math.Max(0, missingContactShows.Distinct(StringComparer.OrdinalIgnoreCase).Count() - sampleShows.Length);
+            var suffix = remainder > 0 ? $" (+{remainder} more)." : ".";
+            warnings.Add($"Missing contact email penalty applied to {missingContactShows.Distinct(StringComparer.OrdinalIgnoreCase).Count()} show(s): {sample}{suffix}");
+        }
+
         return ranked;
     }
 
@@ -100,6 +120,7 @@ public sealed class PodcastRankingPipeline(
         IReadOnlyList<string> keywords,
         DateTimeOffset thresholdUtc,
         bool applyRecencyFilter,
+        List<string> missingContactShows,
         CancellationToken cancellationToken)
     {
         var xml = await _feedClient.GetFeedXmlAsync(candidate.FeedUrl, cancellationToken);
@@ -127,6 +148,15 @@ public sealed class PodcastRankingPipeline(
             return null;
         }
 
+        var missingContactEmail = string.IsNullOrWhiteSpace(parseResult.Payload.PodcastEmail);
+        if (missingContactEmail)
+        {
+            lock (missingContactShows)
+            {
+                missingContactShows.Add(candidate.Name);
+            }
+        }
+
         var show = new Show
         {
             Id = candidate.Id,
@@ -134,7 +164,7 @@ public sealed class PodcastRankingPipeline(
             Description = candidate.Description,
             FeedUrl = candidate.FeedUrl,
             EstimatedReach = candidate.EstimatedReach,
-            ContactMethod = string.IsNullOrWhiteSpace(parseResult.Payload.PodcastEmail) ? ContactMethod.None : ContactMethod.Email,
+            ContactMethod = missingContactEmail ? ContactMethod.None : ContactMethod.Email,
             ContactValue = parseResult.Payload.PodcastEmail,
             Episodes = eligibleEpisodes
         };
@@ -149,9 +179,24 @@ public sealed class PodcastRankingPipeline(
             Reach = intent.Reach,
             Frequency = intent.Frequency,
             NicheFit = intent.NicheFit,
-            Score = intent.Score,
+            Score = missingContactEmail ? Math.Max(0, intent.Score - MissingEmailPenalty) : intent.Score,
             NewestEpisodePublishedAtUtc = intent.NewestEpisodePublishedAtUtc,
             RecentEpisodeTitles = eligibleEpisodes.Select(e => e.Title).ToArray()
         };
+    }
+
+    private static string DescribeFailure(Exception ex)
+    {
+        if (ex is HttpRequestException { StatusCode: { } statusCode })
+        {
+            return $"HTTP {(int)statusCode}";
+        }
+
+        if (ex is HttpRequestException)
+        {
+            return "HTTP request failed";
+        }
+
+        return "feed fetch failed";
     }
 }
