@@ -54,6 +54,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:niche-fitness",
                 Name = "Longevity Fitness Lab",
                 Description = "Focused longevity and performance show.",
+                Language = "en",
                 FeedUrl = "https://feeds.example.com/niche.xml",
                 EstimatedReach = 0.62
             },
@@ -62,6 +63,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:generic-fitness",
                 Name = "Daily Fitness Roundup",
                 Description = "General fitness headlines.",
+                Language = "en",
                 FeedUrl = "https://feeds.example.com/generic.xml",
                 EstimatedReach = 0.95
             },
@@ -70,6 +72,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:tie-a",
                 Name = "Wellness Weekly",
                 Description = "General wellness updates.",
+                Language = "en",
                 FeedUrl = "https://feeds.example.com/tie-a.xml",
                 EstimatedReach = 0.55
             },
@@ -78,6 +81,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:tie-b",
                 Name = "Wellness Weekly",
                 Description = "General wellness updates.",
+                Language = "en",
                 FeedUrl = "https://feeds.example.com/tie-b.xml",
                 EstimatedReach = 0.55
             }
@@ -141,6 +145,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:good",
                 Name = "Healthy Longevity",
                 Description = "High-signal longevity content.",
+                Language = "en",
                 FeedUrl = "https://feeds.example.com/good.xml",
                 EstimatedReach = 0.75
             },
@@ -149,6 +154,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:not-found",
                 Name = "Broken 404 Feed",
                 Description = "Unavailable feed.",
+                Language = "en",
                 FeedUrl = "https://feeds.example.com/404.xml",
                 EstimatedReach = 0.9
             },
@@ -157,6 +163,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:server-error",
                 Name = "Broken 500 Feed",
                 Description = "Unavailable feed.",
+                Language = "en",
                 FeedUrl = "https://feeds.example.com/500.xml",
                 EstimatedReach = 0.9
             }
@@ -212,6 +219,7 @@ public sealed class PodcastRankingPipelineTests
             Id = "listennotes:pod-1",
             Name = "AI Show",
             Description = "AI content",
+            Language = "en",
             FeedUrl = "https://example.com/feed.xml",
             EstimatedReach = 0.5
         };
@@ -240,7 +248,7 @@ public sealed class PodcastRankingPipelineTests
     }
 
     [Fact]
-    public async Task RunAsync_FiltersByLanguage_UsingRssTagThenHeuristics()
+    public async Task RunAsync_FiltersByLanguage_UsingApiMetadataThenHeuristics()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var candidates = new[]
@@ -250,6 +258,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:en-tag",
                 Name = "English Feed",
                 Description = "English language show.",
+                Language = "en-US",
                 FeedUrl = "https://feeds.example.com/en-tag.xml",
                 EstimatedReach = 0.6
             },
@@ -258,6 +267,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:fr-tag",
                 Name = "French Feed",
                 Description = "French language show.",
+                Language = "fr-FR",
                 FeedUrl = "https://feeds.example.com/fr-tag.xml",
                 EstimatedReach = 0.9
             },
@@ -266,6 +276,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:hu-heuristic",
                 Name = "Magyar Beszelgetes",
                 Description = "Magyar interju es beszelgetes tema.",
+                Language = null,
                 FeedUrl = "https://feeds.example.com/hu-heuristic.xml",
                 EstimatedReach = 0.5
             },
@@ -274,6 +285,7 @@ public sealed class PodcastRankingPipelineTests
                 Id = "podchaser:es-heuristic",
                 Name = "Charlas en Espanol",
                 Description = "Contenido en espanol sobre tecnologia.",
+                Language = null,
                 FeedUrl = "https://feeds.example.com/es-heuristic.xml",
                 EstimatedReach = 0.95
             }
@@ -316,6 +328,8 @@ public sealed class PodcastRankingPipelineTests
         Assert.Contains("podchaser:hu-heuristic", showIds);
         Assert.DoesNotContain("podchaser:fr-tag", showIds);
         Assert.DoesNotContain("podchaser:es-heuristic", showIds);
+        Assert.Equal("en", result.Results.Single(r => r.ShowId == "podchaser:en-tag").DetectedLanguage);
+        Assert.Equal("hu", result.Results.Single(r => r.ShowId == "podchaser:hu-heuristic").DetectedLanguage);
     }
 
     private sealed class StubPodcastSearchClient(IReadOnlyList<PodcastSearchResult> candidates) : IPodcastSearchClient

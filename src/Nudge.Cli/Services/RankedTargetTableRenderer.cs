@@ -13,14 +13,14 @@ public static class RankedTargetTableRenderer
             return;
         }
 
-        writer.WriteLine("Rank | Show                          | Score | Reach | Frequency | NicheFit | NewestEp   | Contact");
-        writer.WriteLine("-----+-------------------------------+-------+-------+-----------+----------+------------+----------------------------");
+        writer.WriteLine("Rank | Show                          | Lang | Score | Reach | Frequency | NicheFit | NewestEp   | Contact");
+        writer.WriteLine("-----+-------------------------------+------+-------+-------+-----------+----------+------------+----------------------------");
         for (var i = 0; i < results.Count; i++)
         {
             var r = results[i];
             var newestEpisode = r.NewestEpisodePublishedAtUtc?.UtcDateTime.ToString("yyyy-MM-dd", CultureInfo.InvariantCulture) ?? "-";
             writer.WriteLine(
-                $"{(i + 1),4} | {TrimTo(r.ShowName, 29),-29} | {FormatDecimal(r.Score),5} | {FormatDecimal(r.Reach),5} | {FormatDecimal(r.Frequency),9} | {FormatDecimal(r.NicheFit),8} | {newestEpisode,-10} | {TrimTo(r.ContactEmail ?? "-", 26)}");
+                $"{(i + 1),4} | {TrimTo(r.ShowName, 29),-29} | {r.DetectedLanguage,-4} | {FormatDecimal(r.Score),5} | {FormatDecimal(r.Reach),5} | {FormatDecimal(r.Frequency),9} | {FormatDecimal(r.NicheFit),8} | {newestEpisode,-10} | {TrimTo(r.ContactEmail ?? "-", 26)}");
         }
     }
 

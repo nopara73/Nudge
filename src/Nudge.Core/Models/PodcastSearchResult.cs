@@ -5,6 +5,7 @@ public sealed record PodcastSearchResult
     public required string Id { get; init; }
     public required string Name { get; init; }
     public string Description { get; init; } = string.Empty;
+    public string? Language { get; init; }
     public required string FeedUrl { get; init; }
     public double EstimatedReach { get; init; }
     public ContactMethod ContactMethod { get; init; } = ContactMethod.None;

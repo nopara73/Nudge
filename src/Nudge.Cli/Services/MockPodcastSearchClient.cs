@@ -12,6 +12,7 @@ public sealed class MockPodcastSearchClient : IPodcastSearchClient
             Id = "show-ai-founders",
             Name = "AI Founders Weekly",
             Description = "Interviews with startup founders building AI products.",
+            Language = "en",
             FeedUrl = "memory://ai-founders",
             EstimatedReach = 0.76
         },
@@ -20,6 +21,7 @@ public sealed class MockPodcastSearchClient : IPodcastSearchClient
             Id = "show-b2b-growth",
             Name = "B2B Growth Stories",
             Description = "Practical growth playbooks for SaaS and B2B marketing teams.",
+            Language = "en",
             FeedUrl = "memory://b2b-growth",
             EstimatedReach = 0.63
         },
@@ -28,6 +30,7 @@ public sealed class MockPodcastSearchClient : IPodcastSearchClient
             Id = "show-creator-playbook",
             Name = "Creator Monetization Playbook",
             Description = "How creators build audiences, monetize newsletters, and scale podcasts.",
+            Language = "en",
             FeedUrl = "memory://creator-playbook",
             EstimatedReach = 0.58
         }

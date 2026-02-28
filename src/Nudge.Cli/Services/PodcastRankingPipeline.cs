@@ -145,7 +145,7 @@ public sealed class PodcastRankingPipeline(
         }
 
         var allEpisodes = parseResult.Payload.Episodes.ToArray();
-        if (!IsAllowedLanguage(candidate, parseResult.Payload, allEpisodes))
+        if (!TryDetectAllowedLanguage(candidate, out var detectedLanguage))
         {
             return null;
         }
@@ -193,6 +193,7 @@ public sealed class PodcastRankingPipeline(
         {
             ShowId = show.Id,
             ShowName = show.Name,
+            DetectedLanguage = detectedLanguage,
             FeedUrl = show.FeedUrl,
             ContactEmail = show.ContactValue,
             Reach = intent.Reach,
@@ -219,15 +220,28 @@ public sealed class PodcastRankingPipeline(
         return "feed fetch failed";
     }
 
-    private static bool IsAllowedLanguage(PodcastSearchResult candidate, RssParsePayload payload, IReadOnlyList<Episode> episodes)
+    private static bool TryDetectAllowedLanguage(PodcastSearchResult candidate, out string detectedLanguage)
     {
-        if (TryClassifyLanguageTag(payload.PodcastLanguage, out var tagClassification))
+        detectedLanguage = string.Empty;
+        if (TryClassifyLanguageTag(candidate.Language, out var tagClassification))
         {
-            return tagClassification is LanguageClassification.English or LanguageClassification.Hungarian;
+            if (tagClassification is LanguageClassification.English or LanguageClassification.Hungarian)
+            {
+                detectedLanguage = ToLanguageCode(tagClassification);
+                return true;
+            }
+
+            return false;
         }
 
-        var inferred = InferLanguageFromText(candidate, episodes);
-        return inferred is LanguageClassification.English or LanguageClassification.Hungarian;
+        var inferred = InferLanguageFromText(candidate);
+        if (inferred is LanguageClassification.English or LanguageClassification.Hungarian)
+        {
+            detectedLanguage = ToLanguageCode(inferred);
+            return true;
+        }
+
+        return false;
     }
 
     private static bool TryClassifyLanguageTag(string? rawLanguage, out LanguageClassification classification)
@@ -255,15 +269,9 @@ public sealed class PodcastRankingPipeline(
         return true;
     }
 
-    private static LanguageClassification InferLanguageFromText(PodcastSearchResult candidate, IReadOnlyList<Episode> episodes)
+    private static LanguageClassification InferLanguageFromText(PodcastSearchResult candidate)
     {
-        var text = string.Join(
-            ' ',
-            new[]
-            {
-                candidate.Name,
-                candidate.Description
-            }.Concat(episodes.SelectMany(e => new[] { e.Title, e.Description })));
+        var text = $"{candidate.Name} {candidate.Description}";
         var normalized = text.ToLowerInvariant();
 
         if (normalized.IndexOfAny(HungarianDiacritics) >= 0)
@@ -297,6 +305,16 @@ public sealed class PodcastRankingPipeline(
         }
 
         return LanguageClassification.Unknown;
+    }
+
+    private static string ToLanguageCode(LanguageClassification classification)
+    {
+        return classification switch
+        {
+            LanguageClassification.English => "en",
+            LanguageClassification.Hungarian => "hu",
+            _ => string.Empty
+        };
     }
 
     private enum LanguageClassification

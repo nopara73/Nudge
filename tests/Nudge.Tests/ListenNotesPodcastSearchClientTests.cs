@@ -26,6 +26,7 @@ public sealed class ListenNotesPodcastSearchClientTests
                               "id": "pod-1",
                               "title": "AI Weekly",
                               "description": "About AI startups.",
+                              "language": "en-US",
                               "rssUrl": "https://example.com/ai.xml",
                               "audienceEstimate": 100000
                             },
@@ -57,6 +58,7 @@ public sealed class ListenNotesPodcastSearchClientTests
         Assert.Single(results);
         Assert.Equal("podchaser:pod-1", results[0].Id);
         Assert.Equal("AI Weekly", results[0].Name);
+        Assert.Equal("en-US", results[0].Language);
         Assert.Equal("https://example.com/ai.xml", results[0].FeedUrl);
         Assert.True(results[0].EstimatedReach > 0.0);
     }

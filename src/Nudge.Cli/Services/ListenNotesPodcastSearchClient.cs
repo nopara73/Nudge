@@ -98,6 +98,7 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
                   id
                   title
                   description
+                  language
                   rssUrl
                   audienceEstimate
                   powerScore
@@ -248,6 +249,9 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         var description = TryGetString(item, "description", out var itemDescription)
             ? itemDescription
             : string.Empty;
+        var language = TryGetString(item, "language", out var itemLanguage)
+            ? itemLanguage
+            : TryGetString(item, "languageCode", out var itemLanguageCode) ? itemLanguageCode : null;
         var estimatedReach = NormalizeReach(
             TryGetDouble(item, "audienceEstimate", out var audienceEstimate) ? audienceEstimate : null,
             TryGetDouble(item, "powerScore", out var powerScore) ? powerScore : null);
@@ -257,6 +261,7 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
             Id = $"podchaser:{id}",
             Name = title,
             Description = description,
+            Language = language,
             FeedUrl = rssUrl,
             EstimatedReach = estimatedReach
         };

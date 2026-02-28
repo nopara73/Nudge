@@ -21,6 +21,7 @@ public sealed class CliUxTests
             {
                 ShowId = "show-1",
                 ShowName = "AI Show",
+                DetectedLanguage = "en",
                 ContactEmail = "host@example.com",
                 Reach = 0.333333,
                 Frequency = 0.666666,
@@ -36,6 +37,8 @@ public sealed class CliUxTests
             Assert.Contains("0.749", table);
             Assert.DoesNotContain("0,749", table);
             Assert.Contains("2026-02-28", table);
+            Assert.Contains("| Lang |", table);
+            Assert.Contains("| en   |", table);
         }
         finally
         {
@@ -49,9 +52,9 @@ public sealed class CliUxTests
     {
         var ranked = new List<RankedTarget>
         {
-            new() { ShowId = "s1", ShowName = "One", Score = 0.9, Reach = 0.9, Frequency = 0.9, NicheFit = 0.9 },
-            new() { ShowId = "s2", ShowName = "Two", Score = 0.8, Reach = 0.8, Frequency = 0.8, NicheFit = 0.8 },
-            new() { ShowId = "s3", ShowName = "Three", Score = 0.7, Reach = 0.7, Frequency = 0.7, NicheFit = 0.7 }
+            new() { ShowId = "s1", ShowName = "One", DetectedLanguage = "en", Score = 0.9, Reach = 0.9, Frequency = 0.9, NicheFit = 0.9 },
+            new() { ShowId = "s2", ShowName = "Two", DetectedLanguage = "en", Score = 0.8, Reach = 0.8, Frequency = 0.8, NicheFit = 0.8 },
+            new() { ShowId = "s3", ShowName = "Three", DetectedLanguage = "en", Score = 0.7, Reach = 0.7, Frequency = 0.7, NicheFit = 0.7 }
         };
 
         var limited = RankedTargetSelection.SelectTop(ranked, 2);

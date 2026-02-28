@@ -4,6 +4,7 @@ public sealed record RankedTarget
 {
     public required string ShowId { get; init; }
     public required string ShowName { get; init; }
+    public required string DetectedLanguage { get; init; }
     public string FeedUrl { get; init; } = string.Empty;
     public string? ContactEmail { get; init; }
     public double Reach { get; init; }
