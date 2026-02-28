@@ -12,6 +12,8 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
     private const double HighIntentWeight = 3.0;
     private const double BaselineIntentWeight = 1.0;
     private const double PenaltyIntentWeight = -2.0;
+    private const double SoftPenaltyIntentWeight = -0.75;
+    private const int RecentTitleTokenMultiplier = 2;
     private const double ActivityRecent30Days = 1.0;
     private const double ActivityRecent90Days = 0.7;
     private const double ActivityRecent180Days = 0.4;
@@ -19,11 +21,15 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
     private const int RecentEpisodeTitleWindow = 5;
     private static readonly string[] HighIntentTokens =
     [
-        "athlete", "masters", "hyrox", "crossfit", "performance", "strength", "vo2", "pr", "training", "competition", "ranking"
+        "athlete", "masters", "hyrox", "crossfit", "triathlon", "performance", "strength", "vo2", "training", "competition",
+        "ranking", "race", "endurance", "power", "speed", "conditioning", "recovery", "escape", "velocity"
     ];
     private static readonly string[] BaselineTokens = ["longevity", "fitness", "aging", "healthspan"];
-    private static readonly string[] PenaltyTokens = ["revenue", "marketing", "entrepreneur", "coaching"];
-    private static readonly string[] BusinessContextTokens = ["revenue", "marketing", "entrepreneur", "coaching", "business", "sales", "monetize", "clients"];
+    private static readonly string[] PenaltyTokens = ["revenue", "sales", "monetize", "clients"];
+    private static readonly string[] SoftPenaltyTokens =
+    [
+        "wellness", "mindset", "entrepreneur", "entrepreneurship", "marketing", "coaching", "business", "biohacking", "lifestyle"
+    ];
     private readonly TimeProvider _timeProvider = timeProvider;
 
     public IntentScore Score(Show show, IReadOnlyList<string> keywords)
@@ -149,7 +155,6 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             };
         }
 
-        var hasBusinessContext = BusinessContextTokens.Any(token => tokenBag.ContainsKey(token));
         var hits = new List<NicheFitTokenHit>();
         var weightedScore = 0.0;
         var totalMatchedTokens = 0;
@@ -157,10 +162,7 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         ApplyTokenHits(HighIntentTokens, HighIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
         ApplyTokenHits(BaselineTokens, BaselineIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
         ApplyTokenHits(PenaltyTokens, PenaltyIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
-        if (hasBusinessContext)
-        {
-            ApplyTokenHits(["wellness"], PenaltyIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
-        }
+        ApplyTokenHits(SoftPenaltyTokens, SoftPenaltyIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
 
         var positiveContribution = hits
             .Where(hit => hit.Contribution > 0)
@@ -180,7 +182,7 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             PositiveContribution = positiveContribution,
             PenaltyMagnitude = penaltyMagnitude,
             TotalMatchedTokens = totalMatchedTokens,
-            BusinessContextDetected = hasBusinessContext
+            BusinessContextDetected = PenaltyTokens.Any(token => tokenBag.ContainsKey(token))
         };
     }
 
@@ -190,8 +192,10 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             .OrderByDescending(e => e.PublishedAtUtc ?? DateTimeOffset.MinValue)
             .ThenBy(e => e.Title, StringComparer.OrdinalIgnoreCase)
             .Take(RecentEpisodeTitleWindow)
-            .Select(e => e.Title);
-        var corpus = string.Join(' ', [show.Name, show.Description ?? string.Empty, string.Join(' ', recentTitles)]);
+            .Select(e => e.Title)
+            .ToArray();
+        var weightedRecentTitles = string.Join(' ', Enumerable.Repeat(string.Join(' ', recentTitles), RecentTitleTokenMultiplier));
+        var corpus = string.Join(' ', [show.Name, show.Description ?? string.Empty, weightedRecentTitles]);
         if (string.IsNullOrWhiteSpace(corpus))
         {
             return [];

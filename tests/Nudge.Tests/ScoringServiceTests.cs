@@ -108,7 +108,7 @@ public sealed class ScoringServiceTests
 
         Assert.InRange(result.NicheFit, 0, 1);
         Assert.Contains(result.NicheFitBreakdown.TokenHits, t => t.Token == "revenue" && t.Weight == -2.0);
-        Assert.Contains(result.NicheFitBreakdown.TokenHits, t => t.Token == "wellness" && t.Weight == -2.0);
+        Assert.Contains(result.NicheFitBreakdown.TokenHits, t => t.Token == "wellness" && t.Weight == -0.75);
         Assert.True(result.NicheFitBreakdown.BusinessContextDetected);
         Assert.True(result.NicheFitBreakdown.PenaltyMagnitude > 0);
     }
@@ -244,6 +244,37 @@ public sealed class ScoringServiceTests
 
         Assert.True(withPenaltyScore.NicheFit < noPenaltyScore.NicheFit);
         Assert.True(withPenaltyScore.NicheFit >= 0);
+    }
+
+    [Fact]
+    public void Score_RecentPerformanceEpisodeTitles_BoostNicheFit_OverTheoryOnlyTitles()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var service = new ScoringService(new FixedTimeProvider(now));
+        var theoryHeavyTitles = BuildShow(
+            id: "theory-heavy",
+            name: "Longevity Athlete Lab",
+            description: "Athlete performance and healthspan perspective.",
+            estimatedReach: 0.65,
+            now,
+            "Longevity theory deep dive",
+            "Healthspan mechanism review",
+            "Aging pathways explained");
+        var performanceHeavyTitles = BuildShow(
+            id: "performance-heavy",
+            name: "Longevity Athlete Lab",
+            description: "Athlete performance and healthspan perspective.",
+            estimatedReach: 0.65,
+            now,
+            "Competition training block",
+            "VO2 and strength progression",
+            "Masters race prep");
+
+        var theoryScore = service.Score(theoryHeavyTitles, ["longevity", "fitness"]);
+        var performanceScore = service.Score(performanceHeavyTitles, ["longevity", "fitness"]);
+
+        Assert.True(performanceScore.NicheFit > theoryScore.NicheFit);
+        Assert.True(performanceScore.Score > theoryScore.Score);
     }
 
     [Fact]
