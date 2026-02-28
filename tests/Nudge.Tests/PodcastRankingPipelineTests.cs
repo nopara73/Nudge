@@ -131,7 +131,92 @@ public sealed class PodcastRankingPipelineTests
 
         Assert.Equal(run1.Results.Select(r => r.ShowId), run2.Results.Select(r => r.ShowId));
         Assert.Equal("podchaser:niche-fitness", run1.Results[0].ShowId);
+        Assert.NotNull(run1.Results[0].NicheFitBreakdown);
         Assert.Contains(run1.Warnings, w => w.Contains("Missing contact email penalty applied", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
+    public async Task RunAsync_IntentAwareNicheScoring_PrioritizesAthleteAndPenalizesBusiness()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var candidates = new[]
+        {
+            new PodcastSearchResult
+            {
+                Id = "podchaser:athlete",
+                Name = "Masters Performance Longevity",
+                Description = "Athlete training and competition prep.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/athlete.xml",
+                EstimatedReach = 0.65
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:longevity",
+                Name = "Longevity Science Journal",
+                Description = "Aging and healthspan research.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/longevity.xml",
+                EstimatedReach = 0.65
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:business",
+                Name = "Wellness Business Builder",
+                Description = "Revenue and marketing playbooks for coaching entrepreneurs.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/business.xml",
+                EstimatedReach = 0.65
+            }
+        };
+
+        var payloads = new Dictionary<string, RssParsePayload>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://feeds.example.com/athlete.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "athlete@example.com",
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(
+                    now,
+                    "Training for competition",
+                    "VO2 and strength block",
+                    "Crossfit PR and ranking")
+            },
+            ["https://feeds.example.com/longevity.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "longevity@example.com",
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(
+                    now,
+                    "Aging pathways",
+                    "Longevity evidence",
+                    "Healthspan biomarkers")
+            },
+            ["https://feeds.example.com/business.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "business@example.com",
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(
+                    now,
+                    "Marketing for fitness coaches",
+                    "Revenue and sales systems",
+                    "Wellness business growth")
+            }
+        };
+
+        var pipeline = BuildPipeline(now, candidates, payloads);
+        var args = new CliArguments(["longevity", "fitness"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false);
+
+        var run1 = await pipeline.RunAsync(args);
+        var run2 = await pipeline.RunAsync(args);
+
+        Assert.Equal(run1.Results.Select(r => r.ShowId), run2.Results.Select(r => r.ShowId));
+        Assert.Equal("podchaser:athlete", run1.Results[0].ShowId);
+
+        var longevity = run1.Results.Single(r => r.ShowId == "podchaser:longevity");
+        var business = run1.Results.Single(r => r.ShowId == "podchaser:business");
+        Assert.True(longevity.NicheFit > business.NicheFit);
+        Assert.Contains(business.NicheFitBreakdown!.TokenHits, t => t.Token == "revenue" && t.Weight < 0);
     }
 
     [Fact]

@@ -8,6 +8,7 @@ public sealed record IntentScore
     public double Frequency { get; init; }
     public double NicheFit { get; init; }
     public double Score { get; init; }
+    public required NicheFitBreakdown NicheFitBreakdown { get; init; }
     public DateTimeOffset? NewestEpisodePublishedAtUtc { get; init; }
     public string? ContactEmail { get; init; }
 }

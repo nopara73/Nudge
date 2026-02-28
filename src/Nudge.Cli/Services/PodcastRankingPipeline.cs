@@ -199,6 +199,7 @@ public sealed class PodcastRankingPipeline(
             Reach = intent.Reach,
             Frequency = intent.Frequency,
             NicheFit = intent.NicheFit,
+            NicheFitBreakdown = intent.NicheFitBreakdown,
             Score = missingContactEmail ? Math.Max(0, intent.Score - MissingEmailPenalty) : intent.Score,
             NewestEpisodePublishedAtUtc = intent.NewestEpisodePublishedAtUtc,
             RecentEpisodeTitles = eligibleEpisodes.Select(e => e.Title).ToArray()

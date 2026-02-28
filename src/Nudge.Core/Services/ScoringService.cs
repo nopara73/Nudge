@@ -9,14 +9,26 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
     private const double ReachWeight = 0.35;
     private const double FrequencyWeight = 0.25;
     private const double NicheFitWeight = 0.40;
+    private const double HighIntentWeight = 3.0;
+    private const double BaselineIntentWeight = 1.0;
+    private const double PenaltyIntentWeight = -2.0;
+    private const int RecentEpisodeTitleWindow = 5;
+    private static readonly string[] HighIntentTokens =
+    [
+        "athlete", "masters", "hyrox", "crossfit", "performance", "strength", "vo2", "pr", "training", "competition", "ranking"
+    ];
+    private static readonly string[] BaselineTokens = ["longevity", "fitness", "aging", "healthspan"];
+    private static readonly string[] PenaltyTokens = ["revenue", "marketing", "entrepreneur", "coaching"];
+    private static readonly string[] BusinessContextTokens = ["revenue", "marketing", "entrepreneur", "coaching", "business", "sales", "monetize", "clients"];
     private readonly TimeProvider _timeProvider = timeProvider;
 
     public IntentScore Score(Show show, IReadOnlyList<string> keywords)
     {
+        _ = keywords;
         var reach = CalculateReach(show);
         var frequency = CalculateFrequency(show.Episodes);
-        var nicheFit = CalculateNicheFit(show, keywords);
-        var score = Clamp01((reach * ReachWeight) + (frequency * FrequencyWeight) + (nicheFit * NicheFitWeight));
+        var nicheFitResult = CalculateNicheFit(show);
+        var score = (reach * ReachWeight) + (frequency * FrequencyWeight) + (nicheFitResult.WeightedScore * NicheFitWeight);
         var newest = show.Episodes
             .Where(e => e.PublishedAtUtc.HasValue)
             .OrderByDescending(e => e.PublishedAtUtc)
@@ -29,8 +41,9 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             ShowName = show.Name,
             Reach = reach,
             Frequency = frequency,
-            NicheFit = nicheFit,
+            NicheFit = nicheFitResult.WeightedScore,
             Score = score,
+            NicheFitBreakdown = nicheFitResult,
             NewestEpisodePublishedAtUtc = newest,
             ContactEmail = show.ContactMethod == ContactMethod.Email ? show.ContactValue : null
         };
@@ -112,52 +125,98 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         return 1 - ((averageGapDays - 7) / (45 - 7));
     }
 
-    private static double CalculateNicheFit(Show show, IReadOnlyList<string> keywords)
+    private static NicheFitBreakdown CalculateNicheFit(Show show)
     {
-        if (keywords.Count == 0)
+        var tokenBag = BuildNicheTokenBag(show);
+        if (tokenBag.Count == 0)
         {
-            return 0;
+            return new NicheFitBreakdown
+            {
+                TokenHits = [],
+                WeightedScore = 0,
+                TotalMatchedTokens = 0,
+                BusinessContextDetected = false
+            };
         }
 
-        var normalizedKeywords = keywords
-            .Where(k => !string.IsNullOrWhiteSpace(k))
-            .Select(k => k.Trim().ToLowerInvariant())
-            .Distinct()
-            .ToArray();
+        var hasBusinessContext = BusinessContextTokens.Any(token => tokenBag.ContainsKey(token));
+        var hits = new List<NicheFitTokenHit>();
+        var weightedScore = 0.0;
+        var totalMatchedTokens = 0;
 
-        if (normalizedKeywords.Length == 0)
+        ApplyTokenHits(HighIntentTokens, HighIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
+        ApplyTokenHits(BaselineTokens, BaselineIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
+        ApplyTokenHits(PenaltyTokens, PenaltyIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
+        if (hasBusinessContext)
         {
-            return 0;
+            ApplyTokenHits(["wellness"], PenaltyIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
         }
 
-        var showTitleScore = MatchRatio(show.Name, normalizedKeywords);
-        var episodeTitleCorpus = string.Join(' ', show.Episodes.Select(e => e.Title));
-        var episodeDescCorpus = string.Join(' ', show.Episodes.Select(e => e.Description));
-        var episodeTitleScore = MatchRatio(episodeTitleCorpus, normalizedKeywords);
-        var episodeDescScore = MatchRatio(episodeDescCorpus, normalizedKeywords);
-
-        return Clamp01((showTitleScore * 0.5) + (episodeTitleScore * 0.3) + (episodeDescScore * 0.2));
+        return new NicheFitBreakdown
+        {
+            TokenHits = hits,
+            WeightedScore = weightedScore,
+            TotalMatchedTokens = totalMatchedTokens,
+            BusinessContextDetected = hasBusinessContext
+        };
     }
 
-    private static double MatchRatio(string text, IReadOnlyCollection<string> keywords)
+    private static Dictionary<string, int> BuildNicheTokenBag(Show show)
     {
-        if (string.IsNullOrWhiteSpace(text))
+        var recentTitles = show.Episodes
+            .OrderByDescending(e => e.PublishedAtUtc ?? DateTimeOffset.MinValue)
+            .ThenBy(e => e.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(RecentEpisodeTitleWindow)
+            .Select(e => e.Title);
+        var corpus = string.Join(' ', [show.Name, show.Description ?? string.Empty, string.Join(' ', recentTitles)]);
+        if (string.IsNullOrWhiteSpace(corpus))
         {
-            return 0;
+            return [];
         }
 
-        var tokenSet = WordTokenRegex()
-            .Matches(text.ToLowerInvariant())
-            .Select(m => m.Value)
-            .ToHashSet(StringComparer.OrdinalIgnoreCase);
-
-        if (tokenSet.Count == 0)
+        var tokenBag = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (Match match in WordTokenRegex().Matches(corpus.ToLowerInvariant()))
         {
-            return 0;
+            var token = match.Value;
+            if (tokenBag.TryGetValue(token, out var count))
+            {
+                tokenBag[token] = count + 1;
+            }
+            else
+            {
+                tokenBag[token] = 1;
+            }
         }
 
-        var matches = keywords.Count(tokenSet.Contains);
-        return (double)matches / keywords.Count;
+        return tokenBag;
+    }
+
+    private static void ApplyTokenHits(
+        IReadOnlyList<string> tokens,
+        double weight,
+        IReadOnlyDictionary<string, int> tokenBag,
+        List<NicheFitTokenHit> hits,
+        ref double weightedScore,
+        ref int totalMatchedTokens)
+    {
+        foreach (var token in tokens)
+        {
+            if (!tokenBag.TryGetValue(token, out var count) || count <= 0)
+            {
+                continue;
+            }
+
+            var contribution = count * weight;
+            weightedScore += contribution;
+            totalMatchedTokens += count;
+            hits.Add(new NicheFitTokenHit
+            {
+                Token = token,
+                Hits = count,
+                Weight = weight,
+                Contribution = contribution
+            });
+        }
     }
 
     private static double Clamp01(double value) => Math.Clamp(value, 0, 1);
