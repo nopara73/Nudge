@@ -189,6 +189,13 @@ public sealed class PodcastRankingPipeline(
         };
 
         var intent = _scoringService.Score(show, keywords);
+        var adjustedScore = missingContactEmail ? Math.Max(0, intent.Score - MissingEmailPenalty) : intent.Score;
+        var outreachPriority = ClassifyOutreachPriority(
+            score: adjustedScore,
+            activityScore: intent.ActivityScore,
+            frequency: intent.Frequency,
+            nicheFit: intent.NicheFit,
+            hasContactEmail: !missingContactEmail);
         return new RankedTarget
         {
             ShowId = show.Id,
@@ -201,10 +208,33 @@ public sealed class PodcastRankingPipeline(
             NicheFit = intent.NicheFit,
             ActivityScore = intent.ActivityScore,
             NicheFitBreakdown = intent.NicheFitBreakdown,
-            Score = missingContactEmail ? Math.Max(0, intent.Score - MissingEmailPenalty) : intent.Score,
+            OutreachPriority = outreachPriority,
+            Score = adjustedScore,
             NewestEpisodePublishedAtUtc = intent.NewestEpisodePublishedAtUtc,
             RecentEpisodeTitles = eligibleEpisodes.Select(e => e.Title).ToArray()
         };
+    }
+
+    private static string ClassifyOutreachPriority(
+        double score,
+        double activityScore,
+        double frequency,
+        double nicheFit,
+        bool hasContactEmail)
+    {
+        var isHighSignal = score >= 0.55 && activityScore >= 0.7 && frequency >= 0.55 && nicheFit >= 0.55;
+        if (isHighSignal && hasContactEmail)
+        {
+            return "High";
+        }
+
+        var isMediumSignal = score >= 0.30 && activityScore >= 0.4 && nicheFit >= 0.45;
+        if (isMediumSignal)
+        {
+            return "Medium";
+        }
+
+        return "Low";
     }
 
     private static string DescribeFailure(Exception ex)

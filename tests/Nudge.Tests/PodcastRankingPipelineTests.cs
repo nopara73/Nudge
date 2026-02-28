@@ -283,6 +283,88 @@ public sealed class PodcastRankingPipelineTests
     }
 
     [Fact]
+    public async Task RunAsync_AssignsOutreachPriority_HighMediumLow_Deterministically()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var candidates = new[]
+        {
+            new PodcastSearchResult
+            {
+                Id = "podchaser:high",
+                Name = "Athlete Performance Weekly",
+                Description = "Masters training and competition prep.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/high.xml",
+                EstimatedReach = 0.75
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:medium",
+                Name = "Athlete Performance Missing Email",
+                Description = "Strong athlete training show without public contact.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/medium.xml",
+                EstimatedReach = 0.75
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:low",
+                Name = "Old Wellness Archive",
+                Description = "Old generic wellness archive.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/low.xml",
+                EstimatedReach = 0.75
+            }
+        };
+
+        var payloads = new Dictionary<string, RssParsePayload>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://feeds.example.com/high.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "high@example.com",
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(
+                    now,
+                    "Athlete training competition",
+                    "VO2 strength block",
+                    "Crossfit PR ranking")
+            },
+            ["https://feeds.example.com/medium.xml"] = new RssParsePayload
+            {
+                PodcastEmail = null,
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(
+                    now.AddDays(-45),
+                    "Athlete training",
+                    "Performance review",
+                    "Masters prep")
+            },
+            ["https://feeds.example.com/low.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "low@example.com",
+                PodcastLanguage = "en",
+                Episodes =
+                [
+                    new Episode("Wellness replay", "archive", now.AddDays(-260)),
+                    new Episode("Old wellness episode", "archive", now.AddDays(-290)),
+                    new Episode("Legacy archive", "archive", now.AddDays(-320))
+                ]
+            }
+        };
+
+        var pipeline = BuildPipeline(now, candidates, payloads);
+        var run1 = await pipeline.RunAsync(
+            new CliArguments(["longevity", "fitness"], PublishedAfterDays: 365, Top: 10, JsonOutput: false, PrettyJson: false));
+        var run2 = await pipeline.RunAsync(
+            new CliArguments(["longevity", "fitness"], PublishedAfterDays: 365, Top: 10, JsonOutput: false, PrettyJson: false));
+
+        Assert.Equal(run1.Results.Select(r => r.ShowId), run2.Results.Select(r => r.ShowId));
+        Assert.Equal("High", run1.Results.Single(r => r.ShowId == "podchaser:high").OutreachPriority);
+        Assert.Equal("Medium", run1.Results.Single(r => r.ShowId == "podchaser:medium").OutreachPriority);
+        Assert.Equal("Low", run1.Results.Single(r => r.ShowId == "podchaser:low").OutreachPriority);
+    }
+
+    [Fact]
     public async Task RunAsync_WhenFeedsReturn404Or500_SkipsFailedFeedsAndKeepsStableRanking()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);

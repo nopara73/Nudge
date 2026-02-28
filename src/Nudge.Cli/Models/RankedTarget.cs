@@ -14,6 +14,7 @@ public sealed record RankedTarget
     public double NicheFit { get; init; }
     public double ActivityScore { get; init; }
     public NicheFitBreakdown? NicheFitBreakdown { get; init; }
+    public string OutreachPriority { get; init; } = "Low";
     public double Score { get; init; }
     public DateTimeOffset? NewestEpisodePublishedAtUtc { get; init; }
     public IReadOnlyList<string> RecentEpisodeTitles { get; init; } = Array.Empty<string>();

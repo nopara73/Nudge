@@ -27,6 +27,7 @@ public sealed class CliUxTests
                 Frequency = 0.666666,
                 NicheFit = 0.555555,
                 ActivityScore = 0.8,
+                OutreachPriority = "High",
                 Score = 0.7494,
                 NewestEpisodePublishedAtUtc = new DateTimeOffset(2026, 2, 28, 7, 0, 0, TimeSpan.Zero)
             };
@@ -40,6 +41,7 @@ public sealed class CliUxTests
             Assert.Contains("2026-02-28", table);
             Assert.Contains("| Lang |", table);
             Assert.Contains("| Activity |", table);
+            Assert.Contains("| Priority |", table);
             Assert.Contains("| en   |", table);
         }
         finally
