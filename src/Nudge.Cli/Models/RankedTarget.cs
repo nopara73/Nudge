@@ -12,6 +12,7 @@ public sealed record RankedTarget
     public double Reach { get; init; }
     public double Frequency { get; init; }
     public double NicheFit { get; init; }
+    public double ActivityScore { get; init; }
     public NicheFitBreakdown? NicheFitBreakdown { get; init; }
     public double Score { get; init; }
     public DateTimeOffset? NewestEpisodePublishedAtUtc { get; init; }

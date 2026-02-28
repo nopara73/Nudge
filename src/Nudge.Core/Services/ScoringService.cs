@@ -12,6 +12,10 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
     private const double HighIntentWeight = 3.0;
     private const double BaselineIntentWeight = 1.0;
     private const double PenaltyIntentWeight = -2.0;
+    private const double ActivityRecent30Days = 1.0;
+    private const double ActivityRecent90Days = 0.7;
+    private const double ActivityRecent180Days = 0.4;
+    private const double ActivityStale = 0.15;
     private const int RecentEpisodeTitleWindow = 5;
     private static readonly string[] HighIntentTokens =
     [
@@ -28,12 +32,14 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         var reach = CalculateReach(show);
         var frequency = CalculateFrequency(show.Episodes);
         var nicheFitResult = CalculateNicheFit(show);
-        var score = (reach * ReachWeight) + (frequency * FrequencyWeight) + (nicheFitResult.WeightedScore * NicheFitWeight);
         var newest = show.Episodes
             .Where(e => e.PublishedAtUtc.HasValue)
             .OrderByDescending(e => e.PublishedAtUtc)
             .FirstOrDefault()
             ?.PublishedAtUtc;
+        var activityScore = CalculateActivityScore(newest, _timeProvider.GetUtcNow());
+        var baseScore = (reach * ReachWeight) + (frequency * FrequencyWeight) + (nicheFitResult.NormalizedScore * NicheFitWeight);
+        var score = baseScore * activityScore;
 
         return new IntentScore
         {
@@ -41,7 +47,8 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             ShowName = show.Name,
             Reach = reach,
             Frequency = frequency,
-            NicheFit = nicheFitResult.WeightedScore,
+            NicheFit = nicheFitResult.NormalizedScore,
+            ActivityScore = activityScore,
             Score = score,
             NicheFitBreakdown = nicheFitResult,
             NewestEpisodePublishedAtUtc = newest,
@@ -134,6 +141,9 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             {
                 TokenHits = [],
                 WeightedScore = 0,
+                NormalizedScore = 0,
+                PositiveContribution = 0,
+                PenaltyMagnitude = 0,
                 TotalMatchedTokens = 0,
                 BusinessContextDetected = false
             };
@@ -152,10 +162,23 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             ApplyTokenHits(["wellness"], PenaltyIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
         }
 
+        var positiveContribution = hits
+            .Where(hit => hit.Contribution > 0)
+            .Sum(hit => hit.Contribution);
+        var penaltyMagnitude = hits
+            .Where(hit => hit.Contribution < 0)
+            .Sum(hit => -hit.Contribution);
+        var normalizedScore = positiveContribution <= 0
+            ? 0
+            : Clamp01(positiveContribution / (positiveContribution + penaltyMagnitude + 1.0));
+
         return new NicheFitBreakdown
         {
             TokenHits = hits,
             WeightedScore = weightedScore,
+            NormalizedScore = normalizedScore,
+            PositiveContribution = positiveContribution,
+            PenaltyMagnitude = penaltyMagnitude,
             TotalMatchedTokens = totalMatchedTokens,
             BusinessContextDetected = hasBusinessContext
         };
@@ -217,6 +240,32 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
                 Contribution = contribution
             });
         }
+    }
+
+    private static double CalculateActivityScore(DateTimeOffset? newestEpisodePublishedAtUtc, DateTimeOffset now)
+    {
+        if (!newestEpisodePublishedAtUtc.HasValue)
+        {
+            return ActivityStale;
+        }
+
+        var ageDays = (now - newestEpisodePublishedAtUtc.Value).TotalDays;
+        if (ageDays <= 30)
+        {
+            return ActivityRecent30Days;
+        }
+
+        if (ageDays <= 90)
+        {
+            return ActivityRecent90Days;
+        }
+
+        if (ageDays <= 180)
+        {
+            return ActivityRecent180Days;
+        }
+
+        return ActivityStale;
     }
 
     private static double Clamp01(double value) => Math.Clamp(value, 0, 1);

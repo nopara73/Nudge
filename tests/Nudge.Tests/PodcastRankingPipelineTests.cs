@@ -52,8 +52,8 @@ public sealed class PodcastRankingPipelineTests
             new PodcastSearchResult
             {
                 Id = "podchaser:niche-fitness",
-                Name = "Longevity Fitness Lab",
-                Description = "Focused longevity and performance show.",
+                Name = "Masters Athlete Performance Lab",
+                Description = "Focused athlete training competition show.",
                 Language = "en",
                 FeedUrl = "https://feeds.example.com/niche.xml",
                 EstimatedReach = 0.62
@@ -95,9 +95,9 @@ public sealed class PodcastRankingPipelineTests
                 PodcastLanguage = "en-US",
                 Episodes = BuildRecentEpisodes(
                     now,
-                    "Longevity for endurance athletes",
-                    "Fitness protocol updates",
-                    "Longevity + fitness Q&A")
+                    "Athlete competition training block",
+                    "Crossfit PR ranking review",
+                    "VO2 strength masters prep")
             },
             ["https://feeds.example.com/generic.xml"] = new RssParsePayload
             {
@@ -105,8 +105,8 @@ public sealed class PodcastRankingPipelineTests
                 PodcastLanguage = "en",
                 Episodes = BuildRecentEpisodes(
                     now,
-                    "Top fitness gadgets",
-                    "Gym routine myths",
+                    "Top gadgets this week",
+                    "Routine myths",
                     "Protein trends")
             },
             ["https://feeds.example.com/tie-a.xml"] = new RssParsePayload
@@ -217,6 +217,69 @@ public sealed class PodcastRankingPipelineTests
         var business = run1.Results.Single(r => r.ShowId == "podchaser:business");
         Assert.True(longevity.NicheFit > business.NicheFit);
         Assert.Contains(business.NicheFitBreakdown!.TokenHits, t => t.Token == "revenue" && t.Weight < 0);
+    }
+
+    [Fact]
+    public async Task RunAsync_ActivityScore_DemotesPodfadedHighNiche_BelowRecentModerateNiche()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var candidates = new[]
+        {
+            new PodcastSearchResult
+            {
+                Id = "podchaser:old-high-niche",
+                Name = "Elite Athlete Competition Lab",
+                Description = "Masters crossfit hyrox training performance podcast.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/old-high-niche.xml",
+                EstimatedReach = 0.72
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:recent-moderate",
+                Name = "Longevity Fitness Weekly",
+                Description = "General longevity and fitness updates.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/recent-moderate.xml",
+                EstimatedReach = 0.72
+            }
+        };
+
+        var payloads = new Dictionary<string, RssParsePayload>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://feeds.example.com/old-high-niche.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "old@example.com",
+                PodcastLanguage = "en",
+                Episodes =
+                [
+                    new Episode("Competition training PR ranking", "Athlete VO2 strength", now.AddDays(-240)),
+                    new Episode("Crossfit hyrox masters prep", "Performance deep dive", now.AddDays(-260)),
+                    new Episode("Athlete training systems", "Ranking and PR strategy", now.AddDays(-290))
+                ]
+            },
+            ["https://feeds.example.com/recent-moderate.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "recent@example.com",
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(
+                    now,
+                    "Longevity basics",
+                    "Fitness habits",
+                    "Aging and healthspan")
+            }
+        };
+
+        var pipeline = BuildPipeline(now, candidates, payloads);
+        var result = await pipeline.RunAsync(
+            new CliArguments(["longevity", "fitness"], PublishedAfterDays: 365, Top: 10, JsonOutput: false, PrettyJson: false));
+
+        Assert.Equal("podchaser:recent-moderate", result.Results[0].ShowId);
+        var oldHighNiche = result.Results.Single(r => r.ShowId == "podchaser:old-high-niche");
+        var recentModerate = result.Results.Single(r => r.ShowId == "podchaser:recent-moderate");
+        Assert.True(oldHighNiche.NicheFit > recentModerate.NicheFit);
+        Assert.True(oldHighNiche.ActivityScore < recentModerate.ActivityScore);
+        Assert.True(oldHighNiche.Score < recentModerate.Score);
     }
 
     [Fact]

@@ -7,6 +7,7 @@ public sealed record IntentScore
     public double Reach { get; init; }
     public double Frequency { get; init; }
     public double NicheFit { get; init; }
+    public double ActivityScore { get; init; }
     public double Score { get; init; }
     public required NicheFitBreakdown NicheFitBreakdown { get; init; }
     public DateTimeOffset? NewestEpisodePublishedAtUtc { get; init; }
