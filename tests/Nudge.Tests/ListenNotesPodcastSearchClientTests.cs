@@ -60,9 +60,7 @@ public sealed class ListenNotesPodcastSearchClientTests
         });
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var before = DateTimeOffset.UtcNow.AddDays(-45).ToUnixTimeSeconds();
         var results = await client.SearchAsync(["ai", "startups"], 45);
-        var after = DateTimeOffset.UtcNow.AddDays(-45).ToUnixTimeSeconds();
 
         Assert.NotNull(capturedRequest);
         Assert.Equal(HttpMethod.Get, capturedRequest!.Method);
@@ -71,9 +69,7 @@ public sealed class ListenNotesPodcastSearchClientTests
         Assert.Equal("podcast", GetQueryValue(capturedRequest.RequestUri!, "type"));
         Assert.Equal("50", GetQueryValue(capturedRequest.RequestUri!, "len"));
         Assert.Equal("ai startups", Uri.UnescapeDataString(GetQueryValue(capturedRequest.RequestUri!, "q")));
-
-        var publishedAfterValue = long.Parse(GetQueryValue(capturedRequest.RequestUri!, "published_after"));
-        Assert.InRange(publishedAfterValue, before, after);
+        Assert.DoesNotContain("published_after=", capturedRequest.RequestUri!.Query, StringComparison.Ordinal);
 
         Assert.Equal(3, results.Count);
         Assert.Equal("listennotes:pod-1", results[0].Id);

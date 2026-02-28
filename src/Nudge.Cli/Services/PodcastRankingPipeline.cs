@@ -21,8 +21,36 @@ public sealed class PodcastRankingPipeline(
     {
         var warnings = new List<string>();
         var candidates = await _searchClient.SearchAsync(arguments.Keywords, arguments.PublishedAfterDays, cancellationToken);
+        warnings.Add($"Debug: Raw API shows before local filtering: {candidates.Count}");
         var thresholdUtc = _timeProvider.GetUtcNow().AddDays(-arguments.PublishedAfterDays);
+        var ranked = await BuildRankedTargetsAsync(candidates, arguments.Keywords, thresholdUtc, applyRecencyFilter: true, warnings, cancellationToken);
+        if (ranked.Count == 0)
+        {
+            warnings.Add("Debug: No ranked results after local recency filtering; retrying without recency filter.");
+            ranked = await BuildRankedTargetsAsync(candidates, arguments.Keywords, thresholdUtc, applyRecencyFilter: false, warnings, cancellationToken);
+        }
 
+        var ordered = ranked
+            .OrderByDescending(r => r.Score)
+            .ThenByDescending(r => r.NewestEpisodePublishedAtUtc)
+            .ThenBy(r => r.ShowName, StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+
+        return new RankingRunResult
+        {
+            Results = ordered,
+            Warnings = warnings
+        };
+    }
+
+    private async Task<List<RankedTarget>> BuildRankedTargetsAsync(
+        IReadOnlyList<PodcastSearchResult> candidates,
+        IReadOnlyList<string> keywords,
+        DateTimeOffset thresholdUtc,
+        bool applyRecencyFilter,
+        List<string> warnings,
+        CancellationToken cancellationToken)
+    {
         var ranked = new List<RankedTarget>();
         using var semaphore = new SemaphoreSlim(5, 5);
         var tasks = candidates.Select(async candidate =>
@@ -30,7 +58,7 @@ public sealed class PodcastRankingPipeline(
             await semaphore.WaitAsync(cancellationToken);
             try
             {
-                var rankedTarget = await BuildRankedTargetAsync(candidate, arguments.Keywords, thresholdUtc, cancellationToken);
+                var rankedTarget = await BuildRankedTargetAsync(candidate, keywords, thresholdUtc, applyRecencyFilter, cancellationToken);
                 if (rankedTarget is not null)
                 {
                     lock (ranked)
@@ -53,24 +81,14 @@ public sealed class PodcastRankingPipeline(
         });
 
         await Task.WhenAll(tasks);
-
-        var ordered = ranked
-            .OrderByDescending(r => r.Score)
-            .ThenByDescending(r => r.NewestEpisodePublishedAtUtc)
-            .ThenBy(r => r.ShowName, StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-
-        return new RankingRunResult
-        {
-            Results = ordered,
-            Warnings = warnings
-        };
+        return ranked;
     }
 
     private async Task<RankedTarget?> BuildRankedTargetAsync(
         PodcastSearchResult candidate,
         IReadOnlyList<string> keywords,
         DateTimeOffset thresholdUtc,
+        bool applyRecencyFilter,
         CancellationToken cancellationToken)
     {
         var xml = await _feedClient.GetFeedXmlAsync(candidate.FeedUrl, cancellationToken);
@@ -80,9 +98,18 @@ public sealed class PodcastRankingPipeline(
             return null;
         }
 
-        var eligibleEpisodes = parseResult.Payload.Episodes
-            .Where(e => e.PublishedAtUtc.HasValue && e.PublishedAtUtc.Value >= thresholdUtc)
-            .ToArray();
+        var allEpisodes = parseResult.Payload.Episodes.ToArray();
+        var eligibleEpisodes = applyRecencyFilter
+            ? allEpisodes
+                .Where(e => e.PublishedAtUtc.HasValue && e.PublishedAtUtc.Value >= thresholdUtc)
+                .ToArray()
+            : allEpisodes;
+
+        if (applyRecencyFilter && eligibleEpisodes.Length == 0)
+        {
+            // Keep stale feeds in play so recency can be penalized by scoring instead of hard-filtering out.
+            eligibleEpisodes = allEpisodes;
+        }
 
         if (eligibleEpisodes.Length == 0)
         {

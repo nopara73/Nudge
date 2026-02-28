@@ -1,4 +1,3 @@
-using System.Globalization;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -23,7 +22,7 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
     {
         try
         {
-            return await SearchWithRetryAsync(keywords, publishedAfterDays, cancellationToken);
+            return await SearchWithRetryAsync(keywords, cancellationToken);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
@@ -37,12 +36,11 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
 
     private async Task<IReadOnlyList<PodcastSearchResult>> SearchWithRetryAsync(
         IReadOnlyList<string> keywords,
-        int publishedAfterDays,
         CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            using var request = BuildRequest(keywords, publishedAfterDays);
+            using var request = BuildRequest(keywords);
             try
             {
                 using var response = await _httpClient.SendAsync(request, cancellationToken);
@@ -69,12 +67,10 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         return Array.Empty<PodcastSearchResult>();
     }
 
-    private HttpRequestMessage BuildRequest(IReadOnlyList<string> keywords, int publishedAfterDays)
+    private HttpRequestMessage BuildRequest(IReadOnlyList<string> keywords)
     {
-        var days = publishedAfterDays > 0 ? publishedAfterDays : _options.PublishedAfterDays;
-        var publishedAfter = DateTimeOffset.UtcNow.AddDays(-days).ToUnixTimeSeconds();
         var query = Uri.EscapeDataString(string.Join(' ', keywords.Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k.Trim())));
-        var uri = $"{SearchPath}?type=podcast&len=50&q={query}&published_after={publishedAfter.ToString(CultureInfo.InvariantCulture)}";
+        var uri = $"{SearchPath}?type=podcast&len=50&q={query}";
 
         var request = new HttpRequestMessage(HttpMethod.Get, uri);
         request.Headers.UserAgent.Clear();

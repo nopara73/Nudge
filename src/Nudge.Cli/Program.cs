@@ -31,6 +31,7 @@ if (!cliUseMockResult.Success)
 var configuration = BuildConfiguration();
 var podchaserOptions = BuildPodchaserOptions(configuration);
 var selectedToken = ResolvePodcastSearchApiToken(podchaserOptions);
+LogPodchaserConfigurationStatus(podchaserOptions);
 
 var optionsResult = BuildNudgeOptionsFromEnvironment(selectedToken);
 if (!optionsResult.Success || optionsResult.Options is null)
@@ -102,7 +103,7 @@ static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, ICo
 {
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddOptions();
-    serviceCollection.Configure<PodchaserOptions>(configuration.GetSection(PodchaserOptions.SectionName));
+    serviceCollection.Configure<PodchaserOptions>(configuration.GetSection("Podchaser"));
     serviceCollection.AddSingleton<TimeProvider>(TimeProvider.System);
     serviceCollection.AddSingleton(options);
     serviceCollection.AddSingleton<IScoringService, ScoringService>();
@@ -177,7 +178,10 @@ static (bool Success, bool UseMock, string? Error) ParseCliUseMock(IReadOnlyList
 
 static IConfigurationRoot BuildConfiguration()
 {
-    return new ConfigurationBuilder()
+    var builder = new ConfigurationBuilder();
+    builder.SetBasePath(Directory.GetCurrentDirectory());
+
+    return builder
         .AddJsonFile("nudge.local.json", optional: true, reloadOnChange: false)
         .AddEnvironmentVariables()
         .Build();
@@ -186,8 +190,19 @@ static IConfigurationRoot BuildConfiguration()
 static PodchaserOptions BuildPodchaserOptions(IConfiguration configuration)
 {
     var options = new PodchaserOptions();
-    configuration.GetSection(PodchaserOptions.SectionName).Bind(options);
+    configuration.GetSection("Podchaser").Bind(options);
     return options;
+}
+
+static void LogPodchaserConfigurationStatus(PodchaserOptions options)
+{
+    var configPath = Path.Combine(Directory.GetCurrentDirectory(), "nudge.local.json");
+    var configFound = File.Exists(configPath);
+    var hasDevelopmentToken = !string.IsNullOrWhiteSpace(options.DevelopmentToken);
+    var hasProductionToken = !string.IsNullOrWhiteSpace(options.ProductionToken);
+
+    Console.Error.WriteLine(
+        $"Debug: nudge.local.json found={configFound}; Podchaser tokens detected: development={hasDevelopmentToken}, production={hasProductionToken}.");
 }
 
 static string? ResolvePodcastSearchApiToken(PodchaserOptions options)
