@@ -17,6 +17,16 @@ public static class CliArgumentParser
             var arg = args[i];
             if (arg.StartsWith("--", StringComparison.Ordinal))
             {
+                if (arg.Equals("--use-mock", StringComparison.OrdinalIgnoreCase))
+                {
+                    if (i + 1 < args.Length && !args[i + 1].StartsWith("--", StringComparison.Ordinal))
+                    {
+                        i++;
+                    }
+
+                    continue;
+                }
+
                 if (arg.Equals("--json", StringComparison.OrdinalIgnoreCase))
                 {
                     json = true;
