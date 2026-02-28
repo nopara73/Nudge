@@ -2,7 +2,7 @@ namespace Nudge.Cli.Models;
 
 public sealed record NudgeOptions
 {
-    public const string DefaultBaseUrl = "https://listen-api.listennotes.com/api/v2/";
+    public const string DefaultBaseUrl = "https://api.podchaser.com/";
 
     public string? ApiKey { get; init; }
     public string BaseUrl { get; init; } = DefaultBaseUrl;

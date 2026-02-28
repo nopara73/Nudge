@@ -8,7 +8,7 @@ namespace Nudge.Tests;
 public sealed class ListenNotesPodcastSearchClientTests
 {
     [Fact]
-    public async Task SearchAsync_MapsResults_NormalizesReach_AndBuildsExpectedRequest()
+    public async Task SearchAsync_UsesBearerToken_MapsPodchaserResults_AndSkipsNullRss()
     {
         HttpRequestMessage? capturedRequest = null;
         var handler = new DelegateHttpMessageHandler(request =>
@@ -19,65 +19,46 @@ public sealed class ListenNotesPodcastSearchClientTests
                 Content = new StringContent(
                     """
                     {
-                      "results": [
-                        {
-                          "id": "pod-1",
-                          "title_original": "AI Weekly",
-                          "description_original": "About AI startups.",
-                          "rss": "https://example.com/ai.xml",
-                          "listen_score": 80
-                        },
-                        {
-                          "id": "pod-2",
-                          "title_original": "No Score Podcast",
-                          "description_original": "Missing score should be neutral.",
-                          "rss": "https://example.com/no-score.xml"
-                        },
-                        {
-                          "id": "pod-3",
-                          "title_original": "Big Score Podcast",
-                          "description_original": "Out of range score should clamp.",
-                          "rss": "https://example.com/big-score.xml",
-                          "listen_score": 120
-                        },
-                        {
-                          "id": "pod-1",
-                          "title_original": "Duplicate By Provider Id",
-                          "description_original": "Must be deduped by id only.",
-                          "rss": "https://example.com/duplicate.xml",
-                          "listen_score": 10
-                        },
-                        {
-                          "id": "pod-4",
-                          "title_original": "Missing RSS Podcast",
-                          "description_original": "Must be dropped.",
-                          "listen_score": 50
+                      "data": {
+                        "podcasts": {
+                          "data": [
+                            {
+                              "id": "pod-1",
+                              "title": "AI Weekly",
+                              "description": "About AI startups.",
+                              "rssUrl": "https://example.com/ai.xml",
+                              "audienceEstimate": 100000
+                            },
+                            {
+                              "id": "pod-2",
+                              "title": "Missing RSS Podcast",
+                              "description": "Must be dropped.",
+                              "rssUrl": null,
+                              "powerScore": 70
+                            }
+                          ]
                         }
-                      ]
+                      }
                     }
                     """)
             };
         });
 
-        var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["ai", "startups"], 45);
+        var client = BuildClient(handler, new NudgeOptions { ApiKey = "token-part-1.token-part-2.token-part-3", BaseUrl = NudgeOptions.DefaultBaseUrl });
+        var results = await client.SearchAsync(["ai", "fitness"], 45);
 
         Assert.NotNull(capturedRequest);
-        Assert.Equal(HttpMethod.Get, capturedRequest!.Method);
+        Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
         Assert.Equal("Nudge-Podcast-Bot/1.0", capturedRequest.Headers.UserAgent.ToString());
-        Assert.Equal("api-key-value", capturedRequest.Headers.GetValues("X-ListenAPI-Key").Single());
-        Assert.Equal("podcast", GetQueryValue(capturedRequest.RequestUri!, "type"));
-        Assert.Equal("50", GetQueryValue(capturedRequest.RequestUri!, "len"));
-        Assert.Equal("ai startups", Uri.UnescapeDataString(GetQueryValue(capturedRequest.RequestUri!, "q")));
-        Assert.DoesNotContain("published_after=", capturedRequest.RequestUri!.Query, StringComparison.Ordinal);
+        Assert.Equal("Bearer", capturedRequest.Headers.Authorization?.Scheme);
+        Assert.Equal("token-part-1.token-part-2.token-part-3", capturedRequest.Headers.Authorization?.Parameter);
+        Assert.Equal("https://api.podchaser.com/graphql", capturedRequest.RequestUri!.ToString());
 
-        Assert.Equal(3, results.Count);
-        Assert.Equal("listennotes:pod-1", results[0].Id);
+        Assert.Single(results);
+        Assert.Equal("podchaser:pod-1", results[0].Id);
         Assert.Equal("AI Weekly", results[0].Name);
         Assert.Equal("https://example.com/ai.xml", results[0].FeedUrl);
-        Assert.Equal(0.8, results[0].EstimatedReach, 3);
-        Assert.Equal(0.5, results[1].EstimatedReach, 3);
-        Assert.Equal(1.0, results[2].EstimatedReach, 3);
+        Assert.True(results[0].EstimatedReach > 0.0);
     }
 
     [Fact]
@@ -97,15 +78,19 @@ public sealed class ListenNotesPodcastSearchClientTests
                 Content = new StringContent(
                     """
                     {
-                      "results": [
-                        {
-                          "id": "pod-9",
-                          "title_original": "Recovered Podcast",
-                          "description_original": "Recovered after retry.",
-                          "rss": "https://example.com/recovered.xml",
-                          "listen_score": -10
+                      "data": {
+                        "podcasts": {
+                          "data": [
+                            {
+                              "id": "pod-9",
+                              "title": "Recovered Podcast",
+                              "description": "Recovered after retry.",
+                              "rssUrl": "https://example.com/recovered.xml",
+                              "powerScore": 34
+                            }
+                          ]
                         }
-                      ]
+                      }
                     }
                     """)
             };
@@ -116,7 +101,7 @@ public sealed class ListenNotesPodcastSearchClientTests
 
         Assert.Equal(2, calls);
         Assert.Single(results);
-        Assert.Equal(0.0, results[0].EstimatedReach, 3);
+        Assert.Equal("podchaser:pod-9", results[0].Id);
     }
 
     private static ListenNotesPodcastSearchClient BuildClient(HttpMessageHandler handler, NudgeOptions options)
@@ -128,20 +113,6 @@ public sealed class ListenNotesPodcastSearchClientTests
         };
 
         return new ListenNotesPodcastSearchClient(httpClient, options);
-    }
-
-    private static string GetQueryValue(Uri uri, string key)
-    {
-        foreach (var pair in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
-        {
-            var parts = pair.Split('=', 2);
-            if (parts.Length == 2 && parts[0].Equals(key, StringComparison.Ordinal))
-            {
-                return parts[1];
-            }
-        }
-
-        throw new InvalidOperationException($"Query parameter '{key}' was not found.");
     }
 
     private sealed class DelegateHttpMessageHandler(Func<HttpRequestMessage, HttpResponseMessage> handler) : HttpMessageHandler

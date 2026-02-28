@@ -33,9 +33,27 @@ public static class PodcastSearchClientModeResolver
             return (true, false);
         }
 
-        var apiKeyMissing = string.IsNullOrWhiteSpace(apiKey);
-        return apiKeyMissing
+        var apiKeyMissingOrInvalid = string.IsNullOrWhiteSpace(apiKey) || !LooksLikeBearerToken(apiKey);
+        return apiKeyMissingOrInvalid
             ? (true, true)
             : (false, false);
+    }
+
+    private static bool LooksLikeBearerToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return false;
+        }
+
+        var trimmed = value.Trim();
+        var firstDot = trimmed.IndexOf('.');
+        if (firstDot <= 0)
+        {
+            return false;
+        }
+
+        var secondDot = trimmed.IndexOf('.', firstDot + 1);
+        return secondDot > firstDot + 1 && secondDot < trimmed.Length - 1;
     }
 }

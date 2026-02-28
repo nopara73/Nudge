@@ -5,11 +5,13 @@ namespace Nudge.Tests;
 public sealed class PodcastSearchClientModeResolverTests
 {
     [Theory]
-    [InlineData(true, null, "key", true, false)]
-    [InlineData(false, true, "key", true, false)]
-    [InlineData(true, false, "key", false, false)]
+    [InlineData(true, null, "token.part.one", true, false)]
+    [InlineData(false, true, "token.part.one", true, false)]
+    [InlineData(true, false, "token.part.one", false, false)]
     [InlineData(false, null, null, true, true)]
-    [InlineData(false, null, "key", false, false)]
+    [InlineData(false, null, "not-a-bearer-token", true, true)]
+    [InlineData(false, null, "segment1.segment2", true, true)]
+    [InlineData(false, null, "token.part.one", false, false)]
     public void ResolveUseMock_AppliesPrecedenceAndApiKeyFallback(
         bool cliUseMock,
         bool? envUseMock,

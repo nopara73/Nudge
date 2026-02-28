@@ -60,7 +60,7 @@ var mode = PodcastSearchClientModeResolver.ResolveUseMock(
     selectedToken);
 if (mode.MissingApiKeyWarning)
 {
-    Console.Error.WriteLine("Warning: No Podchaser token configured; falling back to mock podcast search client.");
+    Console.Error.WriteLine("Warning: Podchaser token missing or invalid; falling back to mock podcast search client.");
 }
 
 var services = ConfigureServices(options, mode.UseMock, configuration);
