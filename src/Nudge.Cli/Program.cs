@@ -1,5 +1,7 @@
 using System.Text.Json;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
+using Microsoft.Extensions.Options;
 using Nudge.Cli.Models;
 using Nudge.Cli.Services;
 using Nudge.Core.Interfaces;
@@ -26,7 +28,11 @@ if (!cliUseMockResult.Success)
     return 1;
 }
 
-var optionsResult = BuildNudgeOptionsFromEnvironment();
+var configuration = BuildConfiguration();
+var podchaserOptions = BuildPodchaserOptions(configuration);
+var selectedToken = ResolvePodcastSearchApiToken(podchaserOptions);
+
+var optionsResult = BuildNudgeOptionsFromEnvironment(selectedToken);
 if (!optionsResult.Success || optionsResult.Options is null)
 {
     Console.Error.WriteLine($"Configuration error: {optionsResult.Error}");
@@ -50,13 +56,13 @@ if (envUseMockRaw is not null && !envUseMock.HasValue)
 var mode = PodcastSearchClientModeResolver.ResolveUseMock(
     cliUseMockResult.UseMock,
     envUseMock,
-    options.ApiKey);
+    selectedToken);
 if (mode.MissingApiKeyWarning)
 {
-    Console.Error.WriteLine("Warning: NUDGE_PODCAST_API_KEY is missing; falling back to mock podcast search client.");
+    Console.Error.WriteLine("Warning: No Podchaser token configured; falling back to mock podcast search client.");
 }
 
-var services = ConfigureServices(options, mode.UseMock);
+var services = ConfigureServices(options, mode.UseMock, configuration);
 var pipeline = services.GetRequiredService<PodcastRankingPipeline>();
 var run = await pipeline.RunAsync(cliArgs);
 var limitedResults = RankedTargetSelection.SelectTop(run.Results, cliArgs.Top);
@@ -92,25 +98,31 @@ if (cliArgs.JsonOutput)
 
 return 0;
 
-static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock)
+static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, IConfiguration configuration)
 {
     var serviceCollection = new ServiceCollection();
+    serviceCollection.AddOptions();
+    serviceCollection.Configure<PodchaserOptions>(configuration.GetSection(PodchaserOptions.SectionName));
     serviceCollection.AddSingleton<TimeProvider>(TimeProvider.System);
     serviceCollection.AddSingleton(options);
     serviceCollection.AddSingleton<IScoringService, ScoringService>();
     serviceCollection.AddSingleton<IRssParser, RssParser>();
     serviceCollection.AddSingleton<MockPodcastSearchClient>();
-    serviceCollection.AddHttpClient<ListenNotesPodcastSearchClient>(
-            (provider, client) =>
-            {
-                var opts = provider.GetRequiredService<NudgeOptions>();
-                client.BaseAddress = ParseAbsoluteUriOrThrow(opts.BaseUrl);
-                client.Timeout = TimeSpan.FromSeconds(10);
-            });
+    serviceCollection.AddHttpClient("podcast-search", (provider, client) =>
+    {
+        var opts = provider.GetRequiredService<NudgeOptions>();
+        client.BaseAddress = ParseAbsoluteUriOrThrow(opts.BaseUrl);
+        client.Timeout = TimeSpan.FromSeconds(10);
+    });
     serviceCollection.AddSingleton<IPodcastSearchClient>(
         provider => useMock
             ? provider.GetRequiredService<MockPodcastSearchClient>()
-            : provider.GetRequiredService<ListenNotesPodcastSearchClient>());
+            : new ListenNotesPodcastSearchClient(
+                provider.GetRequiredService<IHttpClientFactory>().CreateClient("podcast-search"),
+                provider.GetRequiredService<NudgeOptions>() with
+                {
+                    ApiKey = ResolvePodcastSearchApiToken(provider.GetRequiredService<IOptions<PodchaserOptions>>().Value)
+                }));
     serviceCollection.AddHttpClient("rss", client =>
     {
         client.Timeout = TimeSpan.FromSeconds(10);
@@ -163,7 +175,37 @@ static (bool Success, bool UseMock, string? Error) ParseCliUseMock(IReadOnlyList
     return (true, false, null);
 }
 
-static (bool Success, NudgeOptions? Options, string? Error) BuildNudgeOptionsFromEnvironment()
+static IConfigurationRoot BuildConfiguration()
+{
+    return new ConfigurationBuilder()
+        .AddJsonFile("nudge.local.json", optional: true, reloadOnChange: false)
+        .AddEnvironmentVariables()
+        .Build();
+}
+
+static PodchaserOptions BuildPodchaserOptions(IConfiguration configuration)
+{
+    var options = new PodchaserOptions();
+    configuration.GetSection(PodchaserOptions.SectionName).Bind(options);
+    return options;
+}
+
+static string? ResolvePodcastSearchApiToken(PodchaserOptions options)
+{
+    if (!string.IsNullOrWhiteSpace(options.ProductionToken))
+    {
+        return options.ProductionToken.Trim();
+    }
+
+    if (!string.IsNullOrWhiteSpace(options.DevelopmentToken))
+    {
+        return options.DevelopmentToken.Trim();
+    }
+
+    return null;
+}
+
+static (bool Success, NudgeOptions? Options, string? Error) BuildNudgeOptionsFromEnvironment(string? apiKey)
 {
     var baseUrl = Environment.GetEnvironmentVariable("NUDGE_PODCAST_API_BASEURL");
     var publishedAfterDaysRaw = Environment.GetEnvironmentVariable("NUDGE_PODCAST_PUBLISHED_AFTER_DAYS");
@@ -177,7 +219,7 @@ static (bool Success, NudgeOptions? Options, string? Error) BuildNudgeOptionsFro
 
     var options = new NudgeOptions
     {
-        ApiKey = Environment.GetEnvironmentVariable("NUDGE_PODCAST_API_KEY"),
+        ApiKey = apiKey,
         BaseUrl = string.IsNullOrWhiteSpace(baseUrl) ? NudgeOptions.DefaultBaseUrl : baseUrl,
         PublishedAfterDays = publishedAfterDays
     };

@@ -68,6 +68,8 @@ coverage-*/
 .env
 .env.*
 !.env.example
+*.local.json
+nudge.local.json
 
 # OS files
 .DS_Store
