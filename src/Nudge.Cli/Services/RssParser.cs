@@ -28,10 +28,12 @@ public sealed partial class RssParser : IRssParser
             }
 
             var email = ExtractEmail(channel);
+            var language = ExtractLanguage(channel);
             var episodes = ParseEpisodes(channel, issues);
             var payload = new RssParsePayload
             {
                 PodcastEmail = email,
+                PodcastLanguage = language,
                 Episodes = episodes
             };
 
@@ -123,6 +125,17 @@ public sealed partial class RssParser : IRssParser
 
     private static string? FirstNonEmpty(params string?[] values) =>
         values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
+
+    private static string? ExtractLanguage(XElement channel)
+    {
+        var rawLanguage = channel.Element("language")?.Value;
+        if (string.IsNullOrWhiteSpace(rawLanguage))
+        {
+            return null;
+        }
+
+        return rawLanguage.Trim();
+    }
 
     [GeneratedRegex(@"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
     private static partial Regex EmailRegex();

@@ -12,6 +12,20 @@ public sealed class PodcastRankingPipeline(
     TimeProvider timeProvider)
 {
     private const double MissingEmailPenalty = 0.03;
+    private static readonly HashSet<string> EnglishSignalWords = new(StringComparer.Ordinal)
+    {
+        "about", "and", "episode", "from", "health", "interview", "science", "the", "this", "with"
+    };
+    private static readonly HashSet<string> HungarianSignalWords = new(StringComparer.Ordinal)
+    {
+        "beszelgetes", "egy", "es", "hogy", "interju", "magyar", "mert", "nem", "vagy", "van"
+    };
+    private static readonly char[] HungarianDiacritics = ['á', 'é', 'í', 'ó', 'ö', 'ő', 'ú', 'ü', 'ű'];
+    private static readonly char[] TokenSeparators =
+    [
+        ' ', '\t', '\r', '\n', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '"', '\'',
+        '/', '\\', '|', '-', '_', '+', '=', '*', '&', '#', '@', '%', '^', '$', '<', '>', '~', '`'
+    ];
     private readonly IPodcastSearchClient _searchClient = searchClient;
     private readonly IRssFeedClient _feedClient = feedClient;
     private readonly IRssParser _rssParser = rssParser;
@@ -131,6 +145,11 @@ public sealed class PodcastRankingPipeline(
         }
 
         var allEpisodes = parseResult.Payload.Episodes.ToArray();
+        if (!IsAllowedLanguage(candidate, parseResult.Payload, allEpisodes))
+        {
+            return null;
+        }
+
         var eligibleEpisodes = applyRecencyFilter
             ? allEpisodes
                 .Where(e => e.PublishedAtUtc.HasValue && e.PublishedAtUtc.Value >= thresholdUtc)
@@ -198,5 +217,93 @@ public sealed class PodcastRankingPipeline(
         }
 
         return "feed fetch failed";
+    }
+
+    private static bool IsAllowedLanguage(PodcastSearchResult candidate, RssParsePayload payload, IReadOnlyList<Episode> episodes)
+    {
+        if (TryClassifyLanguageTag(payload.PodcastLanguage, out var tagClassification))
+        {
+            return tagClassification is LanguageClassification.English or LanguageClassification.Hungarian;
+        }
+
+        var inferred = InferLanguageFromText(candidate, episodes);
+        return inferred is LanguageClassification.English or LanguageClassification.Hungarian;
+    }
+
+    private static bool TryClassifyLanguageTag(string? rawLanguage, out LanguageClassification classification)
+    {
+        classification = LanguageClassification.Unknown;
+        if (string.IsNullOrWhiteSpace(rawLanguage))
+        {
+            return false;
+        }
+
+        var normalized = rawLanguage.Trim().ToLowerInvariant().Replace('_', '-');
+        if (normalized.StartsWith("en", StringComparison.Ordinal) || normalized.Contains("english", StringComparison.Ordinal))
+        {
+            classification = LanguageClassification.English;
+            return true;
+        }
+
+        if (normalized.StartsWith("hu", StringComparison.Ordinal) || normalized.Contains("hungarian", StringComparison.Ordinal))
+        {
+            classification = LanguageClassification.Hungarian;
+            return true;
+        }
+
+        classification = LanguageClassification.Other;
+        return true;
+    }
+
+    private static LanguageClassification InferLanguageFromText(PodcastSearchResult candidate, IReadOnlyList<Episode> episodes)
+    {
+        var text = string.Join(
+            ' ',
+            new[]
+            {
+                candidate.Name,
+                candidate.Description
+            }.Concat(episodes.SelectMany(e => new[] { e.Title, e.Description })));
+        var normalized = text.ToLowerInvariant();
+
+        if (normalized.IndexOfAny(HungarianDiacritics) >= 0)
+        {
+            return LanguageClassification.Hungarian;
+        }
+
+        var englishHits = 0;
+        var hungarianHits = 0;
+        foreach (var token in normalized.Split(TokenSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries))
+        {
+            if (EnglishSignalWords.Contains(token))
+            {
+                englishHits++;
+            }
+
+            if (HungarianSignalWords.Contains(token))
+            {
+                hungarianHits++;
+            }
+        }
+
+        if (hungarianHits >= 2 && hungarianHits >= englishHits + 1)
+        {
+            return LanguageClassification.Hungarian;
+        }
+
+        if (englishHits >= 2 && englishHits >= hungarianHits)
+        {
+            return LanguageClassification.English;
+        }
+
+        return LanguageClassification.Unknown;
+    }
+
+    private enum LanguageClassification
+    {
+        Unknown,
+        English,
+        Hungarian,
+        Other
     }
 }

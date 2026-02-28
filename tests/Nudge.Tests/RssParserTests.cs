@@ -12,6 +12,7 @@ public sealed class RssParserTests
             <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
               <channel>
                 <title>Owner Fallback Podcast</title>
+                <language>en-us</language>
                 <itunes:owner>
                   <itunes:email>owner@example.com</itunes:email>
                 </itunes:owner>
@@ -30,6 +31,7 @@ public sealed class RssParserTests
         Assert.True(result.Success);
         Assert.NotNull(result.Payload);
         Assert.Equal("owner@example.com", result.Payload!.PodcastEmail);
+        Assert.Equal("en-us", result.Payload.PodcastLanguage);
     }
 
     [Fact]

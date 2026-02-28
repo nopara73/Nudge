@@ -88,6 +88,7 @@ public sealed class PodcastRankingPipelineTests
             ["https://feeds.example.com/niche.xml"] = new RssParsePayload
             {
                 PodcastEmail = null,
+                PodcastLanguage = "en-US",
                 Episodes = BuildRecentEpisodes(
                     now,
                     "Longevity for endurance athletes",
@@ -97,6 +98,7 @@ public sealed class PodcastRankingPipelineTests
             ["https://feeds.example.com/generic.xml"] = new RssParsePayload
             {
                 PodcastEmail = "host@generic.example.com",
+                PodcastLanguage = "en",
                 Episodes = BuildRecentEpisodes(
                     now,
                     "Top fitness gadgets",
@@ -106,11 +108,13 @@ public sealed class PodcastRankingPipelineTests
             ["https://feeds.example.com/tie-a.xml"] = new RssParsePayload
             {
                 PodcastEmail = "a@wellness.example.com",
+                PodcastLanguage = "en",
                 Episodes = BuildRecentEpisodes(now, "Weekly roundup", "Weekly roundup", "Weekly roundup")
             },
             ["https://feeds.example.com/tie-b.xml"] = new RssParsePayload
             {
                 PodcastEmail = "b@wellness.example.com",
+                PodcastLanguage = "en",
                 Episodes = BuildRecentEpisodes(now, "Weekly roundup", "Weekly roundup", "Weekly roundup")
             }
         };
@@ -163,6 +167,7 @@ public sealed class PodcastRankingPipelineTests
             ["https://feeds.example.com/good.xml"] = new RssParsePayload
             {
                 PodcastEmail = "hello@healthy.example.com",
+                PodcastLanguage = "en",
                 Episodes = BuildRecentEpisodes(now, "Longevity deep dive", "Fitness and aging", "Sleep science")
             }
         };
@@ -216,6 +221,7 @@ public sealed class PodcastRankingPipelineTests
             ["https://example.com/feed.xml"] = new RssParsePayload
             {
                 PodcastEmail = "host@example.com",
+                PodcastLanguage = "en",
                 Episodes = episodes
             }
         };
@@ -231,6 +237,85 @@ public sealed class PodcastRankingPipelineTests
             new Episode(t2, t2, now.AddDays(-12)),
             new Episode(t3, t3, now.AddDays(-19))
         ];
+    }
+
+    [Fact]
+    public async Task RunAsync_FiltersByLanguage_UsingRssTagThenHeuristics()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var candidates = new[]
+        {
+            new PodcastSearchResult
+            {
+                Id = "podchaser:en-tag",
+                Name = "English Feed",
+                Description = "English language show.",
+                FeedUrl = "https://feeds.example.com/en-tag.xml",
+                EstimatedReach = 0.6
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:fr-tag",
+                Name = "French Feed",
+                Description = "French language show.",
+                FeedUrl = "https://feeds.example.com/fr-tag.xml",
+                EstimatedReach = 0.9
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:hu-heuristic",
+                Name = "Magyar Beszelgetes",
+                Description = "Magyar interju es beszelgetes tema.",
+                FeedUrl = "https://feeds.example.com/hu-heuristic.xml",
+                EstimatedReach = 0.5
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:es-heuristic",
+                Name = "Charlas en Espanol",
+                Description = "Contenido en espanol sobre tecnologia.",
+                FeedUrl = "https://feeds.example.com/es-heuristic.xml",
+                EstimatedReach = 0.95
+            }
+        };
+
+        var payloads = new Dictionary<string, RssParsePayload>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://feeds.example.com/en-tag.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "en@example.com",
+                PodcastLanguage = "en-US",
+                Episodes = BuildRecentEpisodes(now, "Health episode", "Science episode", "Interview episode")
+            },
+            ["https://feeds.example.com/fr-tag.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "fr@example.com",
+                PodcastLanguage = "fr-FR",
+                Episodes = BuildRecentEpisodes(now, "Episode un", "Episode deux", "Episode trois")
+            },
+            ["https://feeds.example.com/hu-heuristic.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "hu@example.com",
+                PodcastLanguage = null,
+                Episodes = BuildRecentEpisodes(now, "Magyar interju", "Beszelgetes es tema", "Egeszseg es eletmod")
+            },
+            ["https://feeds.example.com/es-heuristic.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "es@example.com",
+                PodcastLanguage = null,
+                Episodes = BuildRecentEpisodes(now, "Charlas", "Tecnologia", "Noticias")
+            }
+        };
+
+        var pipeline = BuildPipeline(now, candidates, payloads);
+        var result = await pipeline.RunAsync(
+            new CliArguments(["health"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
+        var showIds = result.Results.Select(r => r.ShowId).ToArray();
+
+        Assert.Contains("podchaser:en-tag", showIds);
+        Assert.Contains("podchaser:hu-heuristic", showIds);
+        Assert.DoesNotContain("podchaser:fr-tag", showIds);
+        Assert.DoesNotContain("podchaser:es-heuristic", showIds);
     }
 
     private sealed class StubPodcastSearchClient(IReadOnlyList<PodcastSearchResult> candidates) : IPodcastSearchClient
@@ -284,6 +369,7 @@ public sealed class PodcastRankingPipelineTests
             return Task.FromResult(Result<RssParsePayload>.Ok(new RssParsePayload
             {
                 PodcastEmail = payload.PodcastEmail,
+                PodcastLanguage = payload.PodcastLanguage,
                 Episodes = payload.Episodes
             }));
         }
