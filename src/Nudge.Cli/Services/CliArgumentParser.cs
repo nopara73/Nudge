@@ -39,6 +39,11 @@ public static class CliArgumentParser
                     continue;
                 }
 
+                if (arg.Equals("--verbose", StringComparison.OrdinalIgnoreCase))
+                {
+                    continue;
+                }
+
                 if (i + 1 >= args.Length)
                 {
                     return Result<CliArguments>.Fail(

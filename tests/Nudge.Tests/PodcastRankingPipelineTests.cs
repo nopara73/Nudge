@@ -16,11 +16,13 @@ public sealed class PodcastRankingPipelineTests
             now,
             [new Episode("Old Episode", "about ai", now.AddDays(-120))]);
 
-        var result = await pipeline.RunAsync(new CliArguments(["ai"], PublishedAfterDays: 7, Top: 10, JsonOutput: false, PrettyJson: false));
+        var result = await pipeline.RunAsync(
+            new CliArguments(["ai"], PublishedAfterDays: 7, Top: 10, JsonOutput: false, PrettyJson: false),
+            includeDebugDiagnostics: true);
 
         Assert.Single(result.Results);
-        Assert.Contains(result.Warnings, w => w.Contains("Raw API shows before local filtering: 1", StringComparison.Ordinal));
-        Assert.DoesNotContain(result.Warnings, w => w.Contains("retrying without recency filter", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Diagnostics, w => w.Contains("Raw API shows before local filtering: 1", StringComparison.Ordinal));
+        Assert.DoesNotContain(result.Diagnostics, w => w.Contains("retrying without recency filter", StringComparison.OrdinalIgnoreCase));
     }
 
     [Fact]
@@ -31,11 +33,13 @@ public sealed class PodcastRankingPipelineTests
             now,
             []);
 
-        var result = await pipeline.RunAsync(new CliArguments(["ai"], PublishedAfterDays: 30, Top: 10, JsonOutput: false, PrettyJson: false));
+        var result = await pipeline.RunAsync(
+            new CliArguments(["ai"], PublishedAfterDays: 30, Top: 10, JsonOutput: false, PrettyJson: false),
+            includeDebugDiagnostics: true);
 
         Assert.Empty(result.Results);
-        Assert.Contains(result.Warnings, w => w.Contains("Raw API shows before local filtering: 1", StringComparison.Ordinal));
-        Assert.Contains(result.Warnings, w => w.Contains("retrying without recency filter", StringComparison.OrdinalIgnoreCase));
+        Assert.Contains(result.Diagnostics, w => w.Contains("Raw API shows before local filtering: 1", StringComparison.Ordinal));
+        Assert.Contains(result.Diagnostics, w => w.Contains("retrying without recency filter", StringComparison.OrdinalIgnoreCase));
     }
 
     private static PodcastRankingPipeline BuildPipeline(DateTimeOffset now, IReadOnlyList<Episode> episodes)

@@ -17,16 +17,26 @@ public sealed class PodcastRankingPipeline(
     private readonly IScoringService _scoringService = scoringService;
     private readonly TimeProvider _timeProvider = timeProvider;
 
-    public async Task<RankingRunResult> RunAsync(CliArguments arguments, CancellationToken cancellationToken = default)
+    public async Task<RankingRunResult> RunAsync(
+        CliArguments arguments,
+        bool includeDebugDiagnostics = false,
+        CancellationToken cancellationToken = default)
     {
         var warnings = new List<string>();
+        var diagnostics = new List<string>();
         var candidates = await _searchClient.SearchAsync(arguments.Keywords, arguments.PublishedAfterDays, cancellationToken);
-        warnings.Add($"Debug: Raw API shows before local filtering: {candidates.Count}");
+        if (includeDebugDiagnostics)
+        {
+            diagnostics.Add($"Raw API shows before local filtering: {candidates.Count}");
+        }
         var thresholdUtc = _timeProvider.GetUtcNow().AddDays(-arguments.PublishedAfterDays);
         var ranked = await BuildRankedTargetsAsync(candidates, arguments.Keywords, thresholdUtc, applyRecencyFilter: true, warnings, cancellationToken);
         if (ranked.Count == 0)
         {
-            warnings.Add("Debug: No ranked results after local recency filtering; retrying without recency filter.");
+            if (includeDebugDiagnostics)
+            {
+                diagnostics.Add("No ranked results after local recency filtering; retrying without recency filter.");
+            }
             ranked = await BuildRankedTargetsAsync(candidates, arguments.Keywords, thresholdUtc, applyRecencyFilter: false, warnings, cancellationToken);
         }
 
@@ -39,7 +49,8 @@ public sealed class PodcastRankingPipeline(
         return new RankingRunResult
         {
             Results = ordered,
-            Warnings = warnings
+            Warnings = warnings,
+            Diagnostics = diagnostics
         };
     }
 

@@ -28,10 +28,14 @@ if (!cliUseMockResult.Success)
     return 1;
 }
 
+var verboseDiagnostics = ParseVerboseDiagnostics(args);
 var configuration = BuildConfiguration();
 var podchaserOptions = BuildPodchaserOptions(configuration);
 var selectedToken = ResolvePodcastSearchApiToken(podchaserOptions);
-LogPodchaserConfigurationStatus(podchaserOptions);
+if (verboseDiagnostics)
+{
+    LogPodchaserConfigurationStatus(podchaserOptions);
+}
 
 var optionsResult = BuildNudgeOptionsFromEnvironment(selectedToken);
 if (!optionsResult.Success || optionsResult.Options is null)
@@ -65,7 +69,7 @@ if (mode.MissingApiKeyWarning)
 
 var services = ConfigureServices(options, mode.UseMock, configuration);
 var pipeline = services.GetRequiredService<PodcastRankingPipeline>();
-var run = await pipeline.RunAsync(cliArgs);
+var run = await pipeline.RunAsync(cliArgs, includeDebugDiagnostics: verboseDiagnostics);
 var limitedResults = RankedTargetSelection.SelectTop(run.Results, cliArgs.Top);
 
 foreach (var warning in run.Warnings)
@@ -73,7 +77,14 @@ foreach (var warning in run.Warnings)
     Console.Error.WriteLine($"Warning: {warning}");
 }
 
-Console.WriteLine($"Warnings: {run.Warnings.Count}");
+if (verboseDiagnostics)
+{
+    foreach (var diagnostic in run.Diagnostics)
+    {
+        Console.Error.WriteLine($"Debug: {diagnostic}");
+    }
+}
+
 RankedTargetTableRenderer.Write(limitedResults, Console.Out);
 
 if (cliArgs.JsonOutput)
@@ -145,8 +156,13 @@ static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, ICo
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  Nudge.Cli --keywords \"ai,startups\" --published-after-days 60 [--top 10] [--json] [--pretty] [--use-mock]");
+    Console.WriteLine("  Nudge.Cli --keywords \"ai,startups\" --published-after-days 60 [--top 10] [--json] [--pretty] [--use-mock] [--verbose]");
     Console.WriteLine("  Nudge.Cli \"ai,startups\" 30");
+}
+
+static bool ParseVerboseDiagnostics(IReadOnlyList<string> args)
+{
+    return args.Any(a => a.Equals("--verbose", StringComparison.OrdinalIgnoreCase));
 }
 
 static (bool Success, bool UseMock, string? Error) ParseCliUseMock(IReadOnlyList<string> args)
@@ -261,7 +277,8 @@ static bool WasPublishedAfterDaysProvided(IReadOnlyList<string> args)
         {
             if (args[i].Equals("--json", StringComparison.OrdinalIgnoreCase) ||
                 args[i].Equals("--pretty", StringComparison.OrdinalIgnoreCase) ||
-                args[i].Equals("--use-mock", StringComparison.OrdinalIgnoreCase))
+                args[i].Equals("--use-mock", StringComparison.OrdinalIgnoreCase) ||
+                args[i].Equals("--verbose", StringComparison.OrdinalIgnoreCase))
             {
                 if (args[i].Equals("--use-mock", StringComparison.OrdinalIgnoreCase) &&
                     i + 1 < args.Count &&
