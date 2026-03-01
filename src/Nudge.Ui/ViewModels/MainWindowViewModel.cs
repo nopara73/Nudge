@@ -15,6 +15,7 @@ namespace Nudge.Ui.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase
 {
+    private const string RssViewerBaseUrl = "https://rssrdr.com/?rss=";
     private const int DefaultPublishedAfterDays = 60;
     private const int DefaultTop = 3;
     private const int RecentEpisodeDisplayLimit = 7;
@@ -632,9 +633,15 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        if (TryOpenUrlInNewWindow(uri, out var launchError))
+        if (!TryBuildRssViewerUri(uri, out var viewerUri))
         {
-            RunStatus = $"Opened feed URL for '{SelectedQueueItem.ShowName}' in a new browser window.";
+            RunStatus = $"Feed URL is invalid: {SelectedQueueItem.FeedUrl}";
+            return;
+        }
+
+        if (TryOpenUrlInNewWindow(viewerUri, out var launchError))
+        {
+            RunStatus = $"Opened feed for '{SelectedQueueItem.ShowName}' in an RSS viewer.";
             return;
         }
 
@@ -670,6 +677,18 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         RunStatus = $"Unable to open episode link: {launchError}";
+    }
+
+    private static bool TryBuildRssViewerUri(Uri feedUri, out Uri viewerUri)
+    {
+        viewerUri = null!;
+        if (!feedUri.IsAbsoluteUri)
+        {
+            return false;
+        }
+
+        var encodedFeedUrl = Uri.EscapeDataString(feedUri.ToString());
+        return Uri.TryCreate($"{RssViewerBaseUrl}{encodedFeedUrl}", UriKind.Absolute, out viewerUri);
     }
 
     private static bool TryOpenUrlInNewWindow(Uri uri, out string error)
