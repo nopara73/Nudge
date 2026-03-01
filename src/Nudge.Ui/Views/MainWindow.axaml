@@ -150,7 +150,14 @@
                                         <DataTemplate>
                                             <Expander Header="{Binding Header}" IsExpanded="True" Margin="0,0,0,8">
                                                 <ListBox ItemsSource="{Binding Items}"
-                                                         SelectedItem="{ReflectionBinding $parent[Window].DataContext.SelectedQueueItem}">
+                                                         SelectedItem="{ReflectionBinding $parent[Window].DataContext.SelectedQueueItem}"
+                                                         ScrollViewer.VerticalScrollBarVisibility="Disabled"
+                                                         ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                                                    <ListBox.ItemsPanel>
+                                                        <ItemsPanelTemplate>
+                                                            <StackPanel />
+                                                        </ItemsPanelTemplate>
+                                                    </ListBox.ItemsPanel>
                                                     <ListBox.ItemTemplate>
                                                         <DataTemplate>
                                                             <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
@@ -370,6 +377,11 @@
                     </Grid>
                     <Border Grid.Row="1" Margin="0,8,0,0" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="8">
                         <ListBox ItemsSource="{Binding FilteredHistoryItems}">
+                            <ListBox.ItemsPanel>
+                                <ItemsPanelTemplate>
+                                    <StackPanel />
+                                </ItemsPanelTemplate>
+                            </ListBox.ItemsPanel>
                             <ListBox.ItemTemplate>
                                 <DataTemplate>
                                     <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
