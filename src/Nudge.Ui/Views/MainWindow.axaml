@@ -20,15 +20,59 @@
         <TabControl Grid.Row="0" SelectedIndex="{Binding CurrentViewIndex}">
             <TabItem Header="Run">
                 <ScrollViewer>
-                    <StackPanel Spacing="10" Margin="8">
-                        <TextBlock Text="Run Configuration" FontWeight="SemiBold" />
-                        <Button Content="Run CLI + Ingest" Command="{Binding RunFromConfigCommand}" HorizontalAlignment="Left" />
+                    <StackPanel Spacing="12" Margin="8">
+                        <Border Background="#F3F4F6" CornerRadius="8" Padding="12">
+                            <StackPanel Spacing="10">
+                                <TextBlock Text="Run Configuration" FontWeight="SemiBold" FontSize="16" />
 
-                        <TextBlock Text="Command Preview" FontWeight="SemiBold"/>
-                        <TextBox IsReadOnly="True" Text="{Binding CommandPreview}" TextWrapping="Wrap" MinHeight="50" />
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                    <TextBlock Text="Keywords (comma-separated)" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <Button Grid.Column="1" Content="Reset Defaults" Command="{Binding ResetRunConfigCommand}" />
+                                </Grid>
+                                <TextBox Text="{Binding RunKeywords}"
+                                         Watermark="masters athlete, over 40 fitness, longevity performance"
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         MinHeight="60"
+                                         HorizontalAlignment="Left" />
+                                <TextBlock Text="Use specific phrases to improve podcast relevance."
+                                           TextWrapping="Wrap"
+                                           Foreground="#6B7280" />
 
-                        <TextBlock Text="Warnings / STDERR" FontWeight="SemiBold"/>
-                        <TextBox IsReadOnly="True" Text="{Binding WarningsText}" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="150" />
+                                <TextBlock Text="Published After Days" FontWeight="SemiBold" />
+                                <TextBox Text="{Binding PublishedAfterDays}" Width="180" Watermark="60" HorizontalAlignment="Left" />
+                                <TextBlock Text="Limits candidates to shows with recent episodes in this window."
+                                           TextWrapping="Wrap"
+                                           Foreground="#6B7280" />
+
+                                <TextBlock Text="Top Results To Keep" FontWeight="SemiBold" />
+                                <TextBox Text="{Binding RunTop}" Width="180" Watermark="30" HorizontalAlignment="Left" />
+                                <TextBlock Text="Keeps only the highest-ranked targets from this run."
+                                           TextWrapping="Wrap"
+                                           Foreground="#6B7280" />
+
+                                <TextBlock Text="{Binding RunConfigMessage}" FontWeight="SemiBold" Foreground="#1F2937" />
+
+                                <Button Content="Run CLI + Ingest"
+                                        Command="{Binding RunFromConfigCommand}"
+                                        HorizontalAlignment="Left"
+                                        MinWidth="170" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Background="#F9FAFB" CornerRadius="8" Padding="10">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Command Preview" FontWeight="SemiBold"/>
+                                <TextBox IsReadOnly="True" Text="{Binding CommandPreview}" TextWrapping="Wrap" MinHeight="60" />
+                            </StackPanel>
+                        </Border>
+
+                        <Border Background="#F9FAFB" CornerRadius="8" Padding="10">
+                            <StackPanel Spacing="6">
+                                <TextBlock Text="Warnings / STDERR" FontWeight="SemiBold"/>
+                                <TextBox IsReadOnly="True" Text="{Binding WarningsText}" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="150" />
+                            </StackPanel>
+                        </Border>
                     </StackPanel>
                 </ScrollViewer>
             </TabItem>

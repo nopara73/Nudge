@@ -9,6 +9,9 @@ namespace Nudge.Ui.ViewModels;
 
 public partial class MainWindowViewModel : ViewModelBase
 {
+    private const int DefaultPublishedAfterDays = 60;
+    private const int DefaultTop = 30;
+
     private static readonly string[] DefaultRunKeywords =
     [
         "masters athlete",
@@ -45,7 +48,16 @@ public partial class MainWindowViewModel : ViewModelBase
         var session = _sessionStateStore.Load();
         CurrentViewIndex = ParseViewIndex(session.LastView);
         RunStatus = "Using nudge.local.json. Run when ready.";
-        CommandPreview = _cliRunner.BuildCommandPreview(BuildRunProfile());
+        RunKeywords = string.IsNullOrWhiteSpace(session.RunKeywords)
+            ? string.Join(", ", DefaultRunKeywords)
+            : session.RunKeywords;
+        PublishedAfterDays = string.IsNullOrWhiteSpace(session.PublishedAfterDays)
+            ? DefaultPublishedAfterDays.ToString()
+            : session.PublishedAfterDays;
+        RunTop = string.IsNullOrWhiteSpace(session.RunTop)
+            ? DefaultTop.ToString()
+            : session.RunTop;
+        EvaluateRunConfigurationState();
     }
 
     public ObservableCollection<QueueItem> QueueItems { get; }
@@ -65,6 +77,19 @@ public partial class MainWindowViewModel : ViewModelBase
     private string warningsText = string.Empty;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
+    private string runKeywords = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
+    private string publishedAfterDays = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
+    private string runTop = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
     private bool isBusy;
 
     [ObservableProperty]
@@ -84,6 +109,9 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string historyFilterText = string.Empty;
+
+    [ObservableProperty]
+    private string runConfigMessage = string.Empty;
 
     public int ContactableCount => QueueItems.Count;
 
@@ -136,13 +164,38 @@ public partial class MainWindowViewModel : ViewModelBase
         ApplyHistoryFilter();
     }
 
+    partial void OnRunKeywordsChanged(string value)
+    {
+        EvaluateRunConfigurationState();
+        PersistSession();
+    }
+
+    partial void OnPublishedAfterDaysChanged(string value)
+    {
+        EvaluateRunConfigurationState();
+        PersistSession();
+    }
+
+    partial void OnRunTopChanged(string value)
+    {
+        EvaluateRunConfigurationState();
+        PersistSession();
+    }
+
     [RelayCommand]
     private async Task RunFromConfigAsync()
     {
+        var profileResult = TryBuildRunProfile();
+        if (!profileResult.Success || profileResult.Profile is null)
+        {
+            RunStatus = profileResult.ErrorMessage;
+            return;
+        }
+
         IsBusy = true;
         try
         {
-            var profile = BuildRunProfile();
+            var profile = profileResult.Profile;
             RunStatus = "Running CLI...";
             var cliRun = await _cliRunner.RunAsync(profile);
             CommandPreview = cliRun.CommandPreview;
@@ -169,6 +222,20 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             IsBusy = false;
         }
+    }
+
+    private bool CanRunFromConfig()
+    {
+        return !IsBusy && TryBuildRunProfile().Success;
+    }
+
+    [RelayCommand]
+    private void ResetRunConfig()
+    {
+        RunKeywords = string.Join(", ", DefaultRunKeywords);
+        PublishedAfterDays = DefaultPublishedAfterDays.ToString();
+        RunTop = DefaultTop.ToString();
+        RunStatus = "Run settings reset to defaults.";
     }
 
     [RelayCommand]
@@ -353,17 +420,90 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         _sessionStateStore.Save(new SessionState
         {
-            LastView = CurrentViewIndex.ToString()
+            LastView = CurrentViewIndex.ToString(),
+            RunKeywords = RunKeywords,
+            PublishedAfterDays = PublishedAfterDays,
+            RunTop = RunTop
         });
     }
 
     private RunConfigProfile BuildRunProfile()
     {
+        var parsedKeywords = ParseRunKeywords(RunKeywords);
+        var publishedAfterDaysValue = TryParsePublishedAfterDays(PublishedAfterDays, out var parsedDays)
+            ? parsedDays
+            : DefaultPublishedAfterDays;
+        var topValue = TryParseTop(RunTop, out var parsedTop)
+            ? parsedTop
+            : DefaultTop;
+
         return new RunConfigProfile(
-            DefaultRunKeywords,
-            60,
-            30,
+            parsedKeywords.Count == 0 ? DefaultRunKeywords : parsedKeywords,
+            publishedAfterDaysValue,
+            topValue,
             false,
             false);
+    }
+
+    private (bool Success, RunConfigProfile? Profile, string ErrorMessage) TryBuildRunProfile()
+    {
+        var parsedKeywords = ParseRunKeywords(RunKeywords);
+        if (parsedKeywords.Count == 0)
+        {
+            return (false, null, "Enter at least one keyword for --keywords.");
+        }
+
+        if (!TryParsePublishedAfterDays(PublishedAfterDays, out var parsedDays))
+        {
+            return (false, null, "Published after days must be a non-negative whole number.");
+        }
+
+        if (!TryParseTop(RunTop, out var parsedTop))
+        {
+            return (false, null, "Top must be a positive whole number.");
+        }
+
+        return (true, new RunConfigProfile(parsedKeywords, parsedDays, parsedTop, false, false), string.Empty);
+    }
+
+    private static List<string> ParseRunKeywords(string rawKeywords)
+    {
+        return (rawKeywords ?? string.Empty)
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(keyword => !string.IsNullOrWhiteSpace(keyword))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToList();
+    }
+
+    private static bool TryParsePublishedAfterDays(string rawDays, out int days)
+    {
+        return int.TryParse(rawDays?.Trim(), out days) && days >= 0;
+    }
+
+    private static bool TryParseTop(string rawTop, out int top)
+    {
+        return int.TryParse(rawTop?.Trim(), out top) && top > 0;
+    }
+
+    private void RefreshCommandPreview()
+    {
+        CommandPreview = _cliRunner.BuildCommandPreview(BuildRunProfile());
+    }
+
+    private void EvaluateRunConfigurationState()
+    {
+        var profileResult = TryBuildRunProfile();
+        if (!profileResult.Success || profileResult.Profile is null)
+        {
+            RunConfigMessage = $"Needs input: {profileResult.ErrorMessage}";
+            RefreshCommandPreview();
+            return;
+        }
+
+        var keywordCount = profileResult.Profile.Keywords.Count;
+        var dayLabel = profileResult.Profile.PublishedAfterDays == 1 ? "day" : "days";
+        RunConfigMessage =
+            $"Ready: {keywordCount} keyword(s), last {profileResult.Profile.PublishedAfterDays} {dayLabel}, top {profileResult.Profile.Top}.";
+        CommandPreview = _cliRunner.BuildCommandPreview(profileResult.Profile);
     }
 }
