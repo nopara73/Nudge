@@ -30,6 +30,7 @@ public partial class MainWindowViewModel : ViewModelBase
     ];
     private static readonly IReadOnlyList<OutreachOutcomeOption> DefaultOutreachOutcomes =
     [
+        new OutreachOutcomeOption("New", OutreachOutcomeAction.New, null, null),
         new OutreachOutcomeOption("Contacted (waiting)", OutreachOutcomeAction.ContactedWaiting, "#FEF3C7", "#92400E"),
         new OutreachOutcomeOption("Replied YES", OutreachOutcomeAction.RepliedYes, "#DCFCE7", "#166534"),
         new OutreachOutcomeOption("Replied NO", OutreachOutcomeAction.RepliedNo, "#FEE2E2", "#991B1B")
@@ -60,6 +61,7 @@ public partial class MainWindowViewModel : ViewModelBase
         OutreachState.RepliedYes,
         OutreachState.RepliedNo
     ];
+    private bool _isSynchronizingOutreachOutcomeSelection;
 
     public MainWindowViewModel(
         CliRunnerService cliRunner,
@@ -80,7 +82,7 @@ public partial class MainWindowViewModel : ViewModelBase
         SnoozePresetOptions = DefaultSnoozePresets;
         SelectedSnoozePreset = SnoozePresetOptions.FirstOrDefault();
         OutreachOutcomeOptions = DefaultOutreachOutcomes;
-        SelectedOutreachOutcome = OutreachOutcomeOptions.FirstOrDefault();
+        SelectedOutreachOutcome = FindOutcomeOption(OutreachOutcomeAction.New);
 
         var session = _sessionStateStore.Load();
         CurrentViewIndex = ParseViewIndex(session.LastView);
@@ -331,6 +333,7 @@ public partial class MainWindowViewModel : ViewModelBase
             QueueNote = string.Empty;
             ManualContactEmail = string.Empty;
             SnoozeUntilUtc = null;
+            SyncSelectedOutreachOutcomeToState(OutreachState.New);
             RefreshSelectedTargetComputedState();
             return;
         }
@@ -343,6 +346,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             SnoozeUntilUtc = BuildSnoozeDateFromPreset(SelectedSnoozePreset);
         }
+        SyncSelectedOutreachOutcomeToState(value.State);
         RefreshSelectedTargetComputedState();
         _ = RefreshHistoryAsync(value.IdentityKey);
     }
@@ -361,6 +365,16 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         SnoozeUntilUtc = BuildSnoozeDateFromPreset(value);
+    }
+
+    partial void OnSelectedOutreachOutcomeChanged(OutreachOutcomeOption? value)
+    {
+        if (_isSynchronizingOutreachOutcomeSelection || value is null || SelectedQueueItem is null || IsBusy)
+        {
+            return;
+        }
+
+        _ = ApplyOutcomeFromSelectionAsync(value);
     }
 
     partial void OnHistoryFilterTextChanged(string value)
@@ -636,6 +650,10 @@ public partial class MainWindowViewModel : ViewModelBase
                     await _repository.MarkRepliedNoAsync(SelectedQueueItem, QueueTags, QueueNote);
                     RunStatus = $"Marked replied NO (forever block) for {SelectedQueueItem.ShowName}.";
                     break;
+                case OutreachOutcomeAction.New:
+                    await _repository.ResetOutcomeAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Reset outreach outcome for {SelectedQueueItem.ShowName} to New.";
+                    break;
                 default:
                     return;
             }
@@ -652,6 +670,47 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool CanApplyOutreachOutcome()
     {
         return SelectedQueueItem is not null && SelectedOutreachOutcome is not null && !IsBusy;
+    }
+
+    private async Task ApplyOutcomeFromSelectionAsync(OutreachOutcomeOption selectedOutcome)
+    {
+        if (SelectedQueueItem is null)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            switch (selectedOutcome.Action)
+            {
+                case OutreachOutcomeAction.ContactedWaiting:
+                    await _repository.MarkContactedAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked contacted. Cooldown active for {SelectedQueueItem.ShowName}.";
+                    break;
+                case OutreachOutcomeAction.RepliedYes:
+                    await _repository.MarkRepliedYesAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked replied YES for {SelectedQueueItem.ShowName}.";
+                    break;
+                case OutreachOutcomeAction.RepliedNo:
+                    await _repository.MarkRepliedNoAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked replied NO (forever block) for {SelectedQueueItem.ShowName}.";
+                    break;
+                case OutreachOutcomeAction.New:
+                    await _repository.ResetOutcomeAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Reset outreach outcome for {SelectedQueueItem.ShowName} to New.";
+                    break;
+                default:
+                    return;
+            }
+
+            await RefreshQueueAsync();
+            await RefreshHistoryAsync();
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     [RelayCommand(CanExecute = nameof(CanResetOutreachOutcome))]
@@ -1273,8 +1332,8 @@ public partial class MainWindowViewModel : ViewModelBase
     public sealed record OutreachOutcomeOption(
         string Label,
         OutreachOutcomeAction Action,
-        string BackgroundColor,
-        string ForegroundColor);
+        string? BackgroundColor,
+        string? ForegroundColor);
 
     public sealed class QueueStateGroup(string header, ObservableCollection<QueueItem> items)
     {
@@ -1290,8 +1349,29 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public enum OutreachOutcomeAction
     {
-        ContactedWaiting = 0,
-        RepliedYes = 1,
-        RepliedNo = 2
+        New = 0,
+        ContactedWaiting = 1,
+        RepliedYes = 2,
+        RepliedNo = 3
+    }
+
+    private void SyncSelectedOutreachOutcomeToState(OutreachState state)
+    {
+        var matchingAction = state switch
+        {
+            OutreachState.ContactedWaiting => OutreachOutcomeAction.ContactedWaiting,
+            OutreachState.RepliedYes => OutreachOutcomeAction.RepliedYes,
+            OutreachState.RepliedNo => OutreachOutcomeAction.RepliedNo,
+            _ => OutreachOutcomeAction.New
+        };
+
+        _isSynchronizingOutreachOutcomeSelection = true;
+        SelectedOutreachOutcome = FindOutcomeOption(matchingAction);
+        _isSynchronizingOutreachOutcomeSelection = false;
+    }
+
+    private OutreachOutcomeOption? FindOutcomeOption(OutreachOutcomeAction action)
+    {
+        return OutreachOutcomeOptions.FirstOrDefault(option => option.Action == action);
     }
 }

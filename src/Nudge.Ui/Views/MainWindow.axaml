@@ -156,13 +156,7 @@
                                                             <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
                                                                 <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="4">
                                                                     <TextBlock Text="{Binding ShowName}" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap" />
-                                                                    <TextBlock Grid.Column="1" Foreground="#111827" FontWeight="SemiBold" Text="{Binding Score, StringFormat='Score {0:F3}'}" />
                                                                     <TextBlock Grid.Row="1"
-                                                                               Foreground="#4B5563"
-                                                                               TextTrimming="CharacterEllipsis"
-                                                                               Text="{Binding EffectiveContactEmail, StringFormat='Contact: {0}'}" />
-                                                                    <TextBlock Grid.Row="1"
-                                                                               Grid.Column="1"
                                                                                Foreground="#4B5563"
                                                                                Text="{Binding OutreachPriority, StringFormat='Priority: {0}'}" />
                                                                 </Grid>
@@ -251,16 +245,6 @@
                                                     </DataTemplate>
                                                 </ComboBox.ItemTemplate>
                                             </ComboBox>
-                                            <Button MinHeight="34"
-                                                    Width="190"
-                                                    HorizontalAlignment="Left"
-                                                    Content="Apply Outcome"
-                                                    Command="{Binding ApplyOutreachOutcomeCommand}" />
-                                            <Button MinHeight="34"
-                                                    Width="190"
-                                                    HorizontalAlignment="Left"
-                                                    Content="Reset Outcome"
-                                                    Command="{Binding ResetOutreachOutcomeCommand}" />
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
