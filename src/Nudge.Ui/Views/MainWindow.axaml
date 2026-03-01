@@ -12,6 +12,15 @@
         Background="#F8FAFC"
         Title="Nudge">
 
+    <Window.Styles>
+        <Style Selector="Button">
+            <Setter Property="Cursor" Value="Hand" />
+        </Style>
+        <Style Selector="Button:disabled">
+            <Setter Property="Cursor" Value="Arrow" />
+        </Style>
+    </Window.Styles>
+
     <Grid RowDefinitions="*,Auto" RowSpacing="10" Margin="16">
         <Border Grid.Row="1" Background="#1F2937" CornerRadius="8" Padding="12" Margin="0,10,0,0">
             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
@@ -153,35 +162,76 @@
 
                     <Border Grid.Column="1" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="12">
                         <ScrollViewer>
-                            <StackPanel Spacing="8">
+                            <StackPanel Spacing="10">
                                 <TextBlock Text="Selected Target" FontSize="16" FontWeight="SemiBold"/>
-                                <TextBlock Text="{Binding SelectedItemSummary}" TextWrapping="Wrap"/>
-                                <StackPanel Spacing="8" IsEnabled="{Binding HasQueueSelection}">
-                                    <TextBlock Text="Contact" />
-                                    <TextBox Text="{Binding ManualContactEmail}" Watermark="email@example.com" />
 
-                                    <TextBlock Text="Note" />
-                                    <TextBox Text="{Binding QueueNote}" AcceptsReturn="True" MinHeight="70" TextWrapping="Wrap" />
+                                <StackPanel Spacing="10" IsEnabled="{Binding HasQueueSelection}">
+                                    <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="10">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Text="Contact + Notes" FontWeight="SemiBold" Foreground="#111827" />
+                                            <TextBlock Text="Contact" />
+                                            <TextBox Text="{Binding ManualContactEmail}" Watermark="email@example.com" />
+                                            <TextBlock Text="Note" />
+                                            <TextBox Text="{Binding QueueNote}" AcceptsReturn="True" MinHeight="80" TextWrapping="Wrap" />
+                                            <Button Content="Save"
+                                                    MinHeight="34"
+                                                    Width="160"
+                                                    HorizontalAlignment="Left"
+                                                    Command="{Binding SaveAnnotationCommand}" />
+                                        </StackPanel>
+                                    </Border>
 
-                                    <TextBlock Text="Snooze Until (date)" />
-                                    <DatePicker SelectedDate="{Binding SnoozeUntilUtc}" />
-                                    <WrapPanel Orientation="Horizontal" ItemHeight="32" ItemWidth="120">
-                                        <Button Content="+1 day" Command="{Binding SetSnoozeTomorrowCommand}" />
-                                        <Button Content="+3 days" Command="{Binding SetSnoozeIn3DaysCommand}" />
-                                        <Button Content="+7 days" Command="{Binding SetSnoozeIn7DaysCommand}" />
-                                        <Button Content="Clear date" Command="{Binding ClearSnoozeDateCommand}" />
-                                    </WrapPanel>
-                                    <TextBlock Text="{Binding SnoozeHelperText}" Foreground="#6B7280" TextWrapping="Wrap" />
+                                    <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="10">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Text="Snooze" FontWeight="SemiBold" Foreground="#111827" />
+                                            <ComboBox ItemsSource="{Binding SnoozePresetOptions}"
+                                                      SelectedItem="{Binding SelectedSnoozePreset}">
+                                                <ComboBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding Label}" />
+                                                    </DataTemplate>
+                                                </ComboBox.ItemTemplate>
+                                            </ComboBox>
+                                            <TextBlock Text="{Binding SnoozeUntilDisplay}" FontWeight="SemiBold" />
+                                            <Button Content="Snooze"
+                                                    MinHeight="34"
+                                                    Width="160"
+                                                    HorizontalAlignment="Left"
+                                                    Command="{Binding SnoozeCommand}" />
+                                        </StackPanel>
+                                    </Border>
 
-                                    <WrapPanel Orientation="Horizontal" ItemHeight="34" ItemWidth="160">
-                                        <Button Content="Save Note" Command="{Binding SaveAnnotationCommand}" />
-                                        <Button Content="Mark Contacted" Command="{Binding MarkContactedCommand}" />
-                                        <Button Content="Mark Replied YES" Command="{Binding MarkRepliedYesCommand}" Background="#166534" Foreground="White" />
-                                        <Button Content="Mark Replied NO" Command="{Binding MarkRepliedNoCommand}" Background="#991B1B" Foreground="White" />
-                                        <Button Content="Snooze" Command="{Binding SnoozeCommand}" />
-                                    </WrapPanel>
+                                    <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="10">
+                                        <StackPanel Spacing="8">
+                                            <TextBlock Text="Outreach Outcome" FontWeight="SemiBold" Foreground="#111827" />
+                                            <StackPanel Spacing="8">
+                                                <Button MinHeight="34"
+                                                        Width="160"
+                                                        HorizontalAlignment="Left"
+                                                        Content="Mark Contacted"
+                                                        Command="{Binding MarkContactedCommand}" />
+                                                <Button MinHeight="34"
+                                                        Width="160"
+                                                        HorizontalAlignment="Left"
+                                                        Content="Mark Replied YES"
+                                                        Command="{Binding MarkRepliedYesCommand}"
+                                                        Background="#166534"
+                                                        Foreground="White" />
+                                                <Button MinHeight="34"
+                                                        Width="160"
+                                                        HorizontalAlignment="Left"
+                                                        Content="Mark Replied NO"
+                                                        Command="{Binding MarkRepliedNoCommand}"
+                                                        Background="#991B1B"
+                                                        Foreground="White" />
+                                            </StackPanel>
+                                        </StackPanel>
+                                    </Border>
                                 </StackPanel>
 
+                                <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="10">
+                                    <TextBlock Text="{Binding SelectedItemSummary}" TextWrapping="Wrap"/>
+                                </Border>
                                 <TextBlock Text="Recent Episode Titles" FontWeight="SemiBold"/>
                                 <ItemsControl ItemsSource="{Binding SelectedRecentEpisodeTitles}">
                                     <ItemsControl.ItemTemplate>

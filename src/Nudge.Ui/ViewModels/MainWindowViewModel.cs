@@ -11,6 +11,15 @@ public partial class MainWindowViewModel : ViewModelBase
 {
     private const int DefaultPublishedAfterDays = 60;
     private const int DefaultTop = 30;
+    private static readonly IReadOnlyList<SnoozePresetOption> DefaultSnoozePresets =
+    [
+        new SnoozePresetOption("+1 day", 1, SnoozePresetUnit.Days),
+        new SnoozePresetOption("+3 days", 3, SnoozePresetUnit.Days),
+        new SnoozePresetOption("+7 days", 7, SnoozePresetUnit.Days),
+        new SnoozePresetOption("+1 month", 1, SnoozePresetUnit.Months),
+        new SnoozePresetOption("+3 months", 3, SnoozePresetUnit.Months),
+        new SnoozePresetOption("+6 months", 6, SnoozePresetUnit.Months)
+    ];
 
     private static readonly string[] DefaultRunKeywords =
     [
@@ -44,6 +53,8 @@ public partial class MainWindowViewModel : ViewModelBase
         QueueItems = [];
         HistoryItems = [];
         FilteredHistoryItems = [];
+        SnoozePresetOptions = DefaultSnoozePresets;
+        SelectedSnoozePreset = SnoozePresetOptions.FirstOrDefault();
 
         var session = _sessionStateStore.Load();
         CurrentViewIndex = ParseViewIndex(session.LastView);
@@ -64,6 +75,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public ObservableCollection<QueueItem> QueueItems { get; }
     public ObservableCollection<HistoryEvent> HistoryItems { get; }
     public ObservableCollection<HistoryEvent> FilteredHistoryItems { get; }
+    public IReadOnlyList<SnoozePresetOption> SnoozePresetOptions { get; }
 
     [ObservableProperty]
     private int currentViewIndex;
@@ -100,10 +112,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(StartFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(ConfirmFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelFullResetCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SetSnoozeTomorrowCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SetSnoozeIn3DaysCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SetSnoozeIn7DaysCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ClearSnoozeDateCommand))]
     private bool isBusy;
 
     [ObservableProperty]
@@ -112,10 +120,6 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedNoCommand))]
     [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveAnnotationCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SetSnoozeTomorrowCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SetSnoozeIn3DaysCommand))]
-    [NotifyCanExecuteChangedFor(nameof(SetSnoozeIn7DaysCommand))]
-    [NotifyCanExecuteChangedFor(nameof(ClearSnoozeDateCommand))]
     private QueueItem? selectedQueueItem;
 
     [ObservableProperty]
@@ -130,6 +134,10 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     private DateTimeOffset? snoozeUntilUtc;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
+    private SnoozePresetOption? selectedSnoozePreset;
 
     [ObservableProperty]
     private string historyFilterText = string.Empty;
@@ -187,7 +195,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             if (SnoozeUntilUtc is null)
             {
-                return "Pick a future date or use a quick preset.";
+                return "Choose a snooze duration from the dropdown.";
             }
 
             var selectedDate = ToLocalDate(SnoozeUntilUtc.Value);
@@ -200,7 +208,21 @@ public partial class MainWindowViewModel : ViewModelBase
             }
 
             var dayLabel = deltaDays == 1 ? "day" : "days";
-            return $"Will return to queue in {deltaDays} {dayLabel} ({selectedDate:yyyy-MM-dd}).";
+            return $"Will return to queue in {deltaDays} {dayLabel}.";
+        }
+    }
+
+    public string SnoozeUntilDisplay
+    {
+        get
+        {
+            if (SnoozeUntilUtc is null)
+            {
+                return "Snooze until: not set";
+            }
+
+            var selectedDate = ToLocalDate(SnoozeUntilUtc.Value);
+            return $"Snooze until: {selectedDate:yyyy-MM-dd}";
         }
     }
 
@@ -229,17 +251,33 @@ public partial class MainWindowViewModel : ViewModelBase
         QueueNote = value.Note;
         ManualContactEmail = value.ManualContactEmail ?? value.ContactEmail ?? string.Empty;
         SnoozeUntilUtc = value.SnoozeUntilUtc;
+        if (SnoozeUntilUtc is null && SelectedSnoozePreset is not null)
+        {
+            SnoozeUntilUtc = BuildSnoozeDateFromPreset(SelectedSnoozePreset);
+        }
         OnPropertyChanged(nameof(HasQueueSelection));
         OnPropertyChanged(nameof(SelectedItemSummary));
         OnPropertyChanged(nameof(SelectedRecentEpisodeTitles));
         OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
         OnPropertyChanged(nameof(SnoozeHelperText));
+        OnPropertyChanged(nameof(SnoozeUntilDisplay));
         _ = RefreshHistoryAsync(value.IdentityKey);
     }
 
     partial void OnSnoozeUntilUtcChanged(DateTimeOffset? value)
     {
         OnPropertyChanged(nameof(SnoozeHelperText));
+        OnPropertyChanged(nameof(SnoozeUntilDisplay));
+    }
+
+    partial void OnSelectedSnoozePresetChanged(SnoozePresetOption? value)
+    {
+        if (SelectedQueueItem is null || value is null)
+        {
+            return;
+        }
+
+        SnoozeUntilUtc = BuildSnoozeDateFromPreset(value);
     }
 
     partial void OnHistoryFilterTextChanged(string value)
@@ -529,35 +567,6 @@ public partial class MainWindowViewModel : ViewModelBase
         return SelectedQueueItem is not null && SnoozeUntilUtc is not null && IsSnoozeDateValid(SnoozeUntilUtc.Value) && !IsBusy;
     }
 
-    [RelayCommand(CanExecute = nameof(CanEditSnoozeDate))]
-    private void SetSnoozeTomorrow()
-    {
-        SetSnoozeDateFromNow(1);
-    }
-
-    [RelayCommand(CanExecute = nameof(CanEditSnoozeDate))]
-    private void SetSnoozeIn3Days()
-    {
-        SetSnoozeDateFromNow(3);
-    }
-
-    [RelayCommand(CanExecute = nameof(CanEditSnoozeDate))]
-    private void SetSnoozeIn7Days()
-    {
-        SetSnoozeDateFromNow(7);
-    }
-
-    [RelayCommand(CanExecute = nameof(CanEditSnoozeDate))]
-    private void ClearSnoozeDate()
-    {
-        SnoozeUntilUtc = null;
-    }
-
-    private bool CanEditSnoozeDate()
-    {
-        return SelectedQueueItem is not null && !IsBusy;
-    }
-
     [RelayCommand]
     private async Task SaveAnnotationAsync()
     {
@@ -717,11 +726,15 @@ public partial class MainWindowViewModel : ViewModelBase
         return int.TryParse(rawTop?.Trim(), out top) && top > 0;
     }
 
-    private void SetSnoozeDateFromNow(int daysFromToday)
+    private DateTimeOffset BuildSnoozeDateFromPreset(SnoozePresetOption preset)
     {
-        var targetDate = GetTodayLocal().AddDays(daysFromToday);
+        var targetDate = preset.Unit switch
+        {
+            SnoozePresetUnit.Months => GetTodayLocal().AddMonths(preset.Amount),
+            _ => GetTodayLocal().AddDays(preset.Amount)
+        };
         var offset = TimeZoneInfo.Local.GetUtcOffset(targetDate);
-        SnoozeUntilUtc = new DateTimeOffset(targetDate, offset).ToUniversalTime();
+        return new DateTimeOffset(targetDate, offset).ToUniversalTime();
     }
 
     private bool IsSnoozeDateValid(DateTimeOffset value)
@@ -767,5 +780,13 @@ public partial class MainWindowViewModel : ViewModelBase
         RunConfigMessage =
             $"Ready: {keywordCount} keyword(s), last {profileResult.Profile.PublishedAfterDays} {dayLabel}, top {profileResult.Profile.Top}.";
         CommandPreview = _cliRunner.BuildCommandPreview(profileResult.Profile);
+    }
+
+    public sealed record SnoozePresetOption(string Label, int Amount, SnoozePresetUnit Unit);
+
+    public enum SnoozePresetUnit
+    {
+        Days = 0,
+        Months = 1
     }
 }
