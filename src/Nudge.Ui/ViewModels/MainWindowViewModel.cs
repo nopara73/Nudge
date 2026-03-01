@@ -28,6 +28,12 @@ public partial class MainWindowViewModel : ViewModelBase
         new SnoozePresetOption("+3 months", 3, SnoozePresetUnit.Months),
         new SnoozePresetOption("+6 months", 6, SnoozePresetUnit.Months)
     ];
+    private static readonly IReadOnlyList<OutreachOutcomeOption> DefaultOutreachOutcomes =
+    [
+        new OutreachOutcomeOption("Contacted (waiting)", OutreachOutcomeAction.ContactedWaiting),
+        new OutreachOutcomeOption("Replied YES", OutreachOutcomeAction.RepliedYes),
+        new OutreachOutcomeOption("Replied NO", OutreachOutcomeAction.RepliedNo)
+    ];
 
     private static readonly string[] DefaultRunKeywords =
     [
@@ -73,6 +79,8 @@ public partial class MainWindowViewModel : ViewModelBase
         SelectedNicheFitHighlights = [];
         SnoozePresetOptions = DefaultSnoozePresets;
         SelectedSnoozePreset = SnoozePresetOptions.FirstOrDefault();
+        OutreachOutcomeOptions = DefaultOutreachOutcomes;
+        SelectedOutreachOutcome = OutreachOutcomeOptions.FirstOrDefault();
 
         var session = _sessionStateStore.Load();
         CurrentViewIndex = ParseViewIndex(session.LastView);
@@ -96,6 +104,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public ObservableCollection<HistoryEvent> FilteredHistoryItems { get; }
     public ObservableCollection<string> SelectedNicheFitHighlights { get; }
     public IReadOnlyList<SnoozePresetOption> SnoozePresetOptions { get; }
+    public IReadOnlyList<OutreachOutcomeOption> OutreachOutcomeOptions { get; }
 
     [ObservableProperty]
     private int currentViewIndex;
@@ -126,6 +135,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(MarkContactedCommand))]
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedYesCommand))]
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedNoCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyOutreachOutcomeCommand))]
     [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveAnnotationCommand))]
     [NotifyCanExecuteChangedFor(nameof(StartFullResetCommand))]
@@ -138,6 +148,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(MarkContactedCommand))]
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedYesCommand))]
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedNoCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ApplyOutreachOutcomeCommand))]
     [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveAnnotationCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenFeedUrlCommand))]
@@ -150,6 +161,9 @@ public partial class MainWindowViewModel : ViewModelBase
     private string queueNote = string.Empty;
 
     [ObservableProperty]
+    private string queueFilterText = string.Empty;
+
+    [ObservableProperty]
     private string manualContactEmail = string.Empty;
 
     [ObservableProperty]
@@ -159,6 +173,10 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     private SnoozePresetOption? selectedSnoozePreset;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(ApplyOutreachOutcomeCommand))]
+    private OutreachOutcomeOption? selectedOutreachOutcome;
 
     [ObservableProperty]
     private string historyFilterText = string.Empty;
@@ -205,16 +223,45 @@ public partial class MainWindowViewModel : ViewModelBase
     public string SelectedScoreDisplay =>
         SelectedQueueItem is null ? "-" : SelectedQueueItem.Score.ToString("F3");
 
+    public string SelectedNewestEpisodeDisplay =>
+        SelectedQueueItem?.NewestEpisodePublishedAtUtc is null
+            ? "-"
+            : TimeZoneInfo.ConvertTime(SelectedQueueItem.NewestEpisodePublishedAtUtc.Value, TimeZoneInfo.Local)
+                .ToString("yyyy-MM-dd");
+
     public string SelectedReachDisplay => FormatAsPercent(SelectedQueueItem?.Reach);
     public string SelectedFrequencyDisplay => FormatAsPercent(SelectedQueueItem?.Frequency);
     public string SelectedNicheFitDisplay => FormatAsPercent(SelectedQueueItem?.NicheFit);
     public string SelectedActivityDisplay => FormatAsPercent(SelectedQueueItem?.ActivityScore);
 
     public bool HasQueueSelection => SelectedQueueItem is not null;
+    public bool HasNoQueueSelection => !HasQueueSelection;
+    public int FilteredQueueCount => QueueGroups.Sum(group => group.Items.Count);
+
+    public string QueueFilterSummary
+    {
+        get
+        {
+            var filter = QueueFilterText?.Trim() ?? string.Empty;
+            if (QueueItems.Count == 0)
+            {
+                return "No items in tracker yet.";
+            }
+
+            if (string.IsNullOrWhiteSpace(filter))
+            {
+                return $"{FilteredQueueCount} visible of {QueueItems.Count} tracked.";
+            }
+
+            return $"{FilteredQueueCount} match \"{filter}\" out of {QueueItems.Count} tracked.";
+        }
+    }
 
     public string QueueEmptyMessage =>
         QueueItems.Count == 0
             ? "No tracked targets yet. Run the workflow in the Run tab to ingest results."
+            : QueueGroups.Count == 0
+                ? "No tracked targets match this search."
             : string.Empty;
 
     public string HistoryEmptyMessage =>
@@ -317,6 +364,12 @@ public partial class MainWindowViewModel : ViewModelBase
     partial void OnHistoryFilterTextChanged(string value)
     {
         ApplyHistoryFilter();
+    }
+
+    partial void OnQueueFilterTextChanged(string value)
+    {
+        RebuildQueueGroups();
+        OnPropertyChanged(nameof(QueueFilterSummary));
     }
 
     partial void OnRunKeywordsChanged(string value)
@@ -554,6 +607,49 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool CanMarkRepliedNo()
     {
         return SelectedQueueItem is not null && !IsBusy;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanApplyOutreachOutcome))]
+    private async Task ApplyOutreachOutcomeAsync()
+    {
+        if (SelectedQueueItem is null || SelectedOutreachOutcome is null)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            switch (SelectedOutreachOutcome.Action)
+            {
+                case OutreachOutcomeAction.ContactedWaiting:
+                    await _repository.MarkContactedAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked contacted. Cooldown active for {SelectedQueueItem.ShowName}.";
+                    break;
+                case OutreachOutcomeAction.RepliedYes:
+                    await _repository.MarkRepliedYesAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked replied YES for {SelectedQueueItem.ShowName}.";
+                    break;
+                case OutreachOutcomeAction.RepliedNo:
+                    await _repository.MarkRepliedNoAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked replied NO (forever block) for {SelectedQueueItem.ShowName}.";
+                    break;
+                default:
+                    return;
+            }
+
+            await RefreshQueueAsync();
+            await RefreshHistoryAsync();
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanApplyOutreachOutcome()
+    {
+        return SelectedQueueItem is not null && SelectedOutreachOutcome is not null && !IsBusy;
     }
 
     [RelayCommand]
@@ -941,6 +1037,7 @@ public partial class MainWindowViewModel : ViewModelBase
         PopulateSelectedNicheFitHighlights();
 
         OnPropertyChanged(nameof(HasQueueSelection));
+        OnPropertyChanged(nameof(HasNoQueueSelection));
         OnPropertyChanged(nameof(SelectedItemSummary));
         OnPropertyChanged(nameof(SelectedRecentEpisodes));
         OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
@@ -949,6 +1046,7 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedLanguageDisplay));
         OnPropertyChanged(nameof(SelectedPriorityDisplay));
         OnPropertyChanged(nameof(SelectedScoreDisplay));
+        OnPropertyChanged(nameof(SelectedNewestEpisodeDisplay));
         OnPropertyChanged(nameof(SelectedReachDisplay));
         OnPropertyChanged(nameof(SelectedFrequencyDisplay));
         OnPropertyChanged(nameof(SelectedNicheFitDisplay));
@@ -959,8 +1057,21 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private void RebuildQueueGroups()
     {
+        var filter = QueueFilterText?.Trim() ?? string.Empty;
+        var filteredQueueItems = QueueItems
+            .Where(item =>
+                string.IsNullOrWhiteSpace(filter) ||
+                item.ShowName.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                item.IdentityKey.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                item.EffectiveContactEmail.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                (item.ContactEmail?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false) ||
+                item.Tags.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                item.Note.Contains(filter, StringComparison.OrdinalIgnoreCase) ||
+                (item.ManualContactEmail?.Contains(filter, StringComparison.OrdinalIgnoreCase) ?? false))
+            .ToList();
+
         QueueGroups.Clear();
-        var groupedByState = QueueItems
+        var groupedByState = filteredQueueItems
             .GroupBy(item => item.State)
             .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.Score).ToList());
 
@@ -975,6 +1086,17 @@ public partial class MainWindowViewModel : ViewModelBase
                 BuildQueueStateHeader(state, items.Count),
                 new ObservableCollection<QueueItem>(items)));
         }
+
+        var hasSelectedQueueItemVisible = SelectedQueueItem is not null &&
+                                          filteredQueueItems.Any(item => item.IdentityKey == SelectedQueueItem.IdentityKey);
+        if (!hasSelectedQueueItemVisible)
+        {
+            SelectedQueueItem = filteredQueueItems.FirstOrDefault();
+        }
+
+        OnPropertyChanged(nameof(FilteredQueueCount));
+        OnPropertyChanged(nameof(QueueFilterSummary));
+        OnPropertyChanged(nameof(QueueEmptyMessage));
     }
 
     private static string BuildQueueStateHeader(OutreachState state, int count)
@@ -1119,6 +1241,7 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     public sealed record SnoozePresetOption(string Label, int Amount, SnoozePresetUnit Unit);
+    public sealed record OutreachOutcomeOption(string Label, OutreachOutcomeAction Action);
 
     public sealed class QueueStateGroup(string header, ObservableCollection<QueueItem> items)
     {
@@ -1130,5 +1253,12 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         Days = 0,
         Months = 1
+    }
+
+    public enum OutreachOutcomeAction
+    {
+        ContactedWaiting = 0,
+        RepliedYes = 1,
+        RepliedNo = 2
     }
 }

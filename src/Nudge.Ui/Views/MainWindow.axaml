@@ -139,8 +139,11 @@
 
             <TabItem Header="Tracker">
                 <Grid ColumnDefinitions="2*,3*" ColumnSpacing="12" Margin="10">
-                    <Grid RowDefinitions="*,Auto" RowSpacing="8">
-                        <Border Grid.Row="0" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="8">
+                    <Grid RowDefinitions="Auto,*,Auto" RowSpacing="8">
+                        <TextBox Grid.Row="0"
+                                 Text="{Binding QueueFilterText}"
+                                 Watermark="Search by show, email, tag, note, identity..." />
+                        <Border Grid.Row="1" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="8">
                             <ScrollViewer VerticalScrollBarVisibility="Auto">
                                 <ItemsControl ItemsSource="{Binding QueueGroups}">
                                     <ItemsControl.ItemTemplate>
@@ -151,9 +154,17 @@
                                                     <ListBox.ItemTemplate>
                                                         <DataTemplate>
                                                             <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
-                                                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                                <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="4">
                                                                     <TextBlock Text="{Binding ShowName}" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap" />
                                                                     <TextBlock Grid.Column="1" Foreground="#111827" FontWeight="SemiBold" Text="{Binding Score, StringFormat='Score {0:F3}'}" />
+                                                                    <TextBlock Grid.Row="1"
+                                                                               Foreground="#4B5563"
+                                                                               TextTrimming="CharacterEllipsis"
+                                                                               Text="{Binding EffectiveContactEmail, StringFormat='Contact: {0}'}" />
+                                                                    <TextBlock Grid.Row="1"
+                                                                               Grid.Column="1"
+                                                                               Foreground="#4B5563"
+                                                                               Text="{Binding OutreachPriority, StringFormat='Priority: {0}'}" />
                                                                 </Grid>
                                                             </Border>
                                                         </DataTemplate>
@@ -165,7 +176,7 @@
                                 </ItemsControl>
                             </ScrollViewer>
                         </Border>
-                        <TextBlock Grid.Row="1" Text="{Binding QueueEmptyMessage}" Foreground="#6B7280" TextWrapping="Wrap" />
+                        <TextBlock Grid.Row="2" Text="{Binding QueueEmptyMessage}" Foreground="#6B7280" TextWrapping="Wrap" />
                     </Grid>
 
                     <Border Grid.Column="1" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="12">
@@ -173,7 +184,18 @@
                             <StackPanel Spacing="10">
                                 <TextBlock Text="Selected Target" FontSize="16" FontWeight="SemiBold"/>
 
-                                <StackPanel Spacing="10" IsEnabled="{Binding HasQueueSelection}">
+                                <Border IsVisible="{Binding HasNoQueueSelection}"
+                                        Background="#FFFFFF"
+                                        BorderBrush="#E5E7EB"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="12">
+                                    <TextBlock Text="Choose a queue item on the left to unlock contact details, snooze actions, and outreach outcomes."
+                                               Foreground="#6B7280"
+                                               TextWrapping="Wrap" />
+                                </Border>
+
+                                <StackPanel Spacing="10" IsVisible="{Binding HasQueueSelection}" IsEnabled="{Binding HasQueueSelection}">
                                     <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="10">
                                         <StackPanel Spacing="8">
                                             <TextBlock Text="Contact + Notes" FontWeight="SemiBold" Foreground="#111827" />
@@ -181,9 +203,9 @@
                                             <TextBox Text="{Binding ManualContactEmail}" Watermark="email@example.com" />
                                             <TextBlock Text="Note" />
                                             <TextBox Text="{Binding QueueNote}" AcceptsReturn="True" MinHeight="80" TextWrapping="Wrap" />
-                                            <Button Content="Save"
+                                            <Button Content="Save Contact + Notes"
                                                     MinHeight="34"
-                                                    Width="160"
+                                                    Width="190"
                                                     HorizontalAlignment="Left"
                                                     Command="{Binding SaveAnnotationCommand}" />
                                         </StackPanel>
@@ -212,27 +234,19 @@
                                     <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="10">
                                         <StackPanel Spacing="8">
                                             <TextBlock Text="Outreach Outcome" FontWeight="SemiBold" Foreground="#111827" />
-                                            <StackPanel Spacing="8">
-                                                <Button MinHeight="34"
-                                                        Width="160"
-                                                        HorizontalAlignment="Left"
-                                                        Content="Mark Contacted"
-                                                        Command="{Binding MarkContactedCommand}" />
-                                                <Button MinHeight="34"
-                                                        Width="160"
-                                                        HorizontalAlignment="Left"
-                                                        Content="Mark Replied YES"
-                                                        Command="{Binding MarkRepliedYesCommand}"
-                                                        Background="#166534"
-                                                        Foreground="White" />
-                                                <Button MinHeight="34"
-                                                        Width="160"
-                                                        HorizontalAlignment="Left"
-                                                        Content="Mark Replied NO"
-                                                        Command="{Binding MarkRepliedNoCommand}"
-                                                        Background="#991B1B"
-                                                        Foreground="White" />
-                                            </StackPanel>
+                                            <ComboBox ItemsSource="{Binding OutreachOutcomeOptions}"
+                                                      SelectedItem="{Binding SelectedOutreachOutcome}">
+                                                <ComboBox.ItemTemplate>
+                                                    <DataTemplate>
+                                                        <TextBlock Text="{Binding Label}" />
+                                                    </DataTemplate>
+                                                </ComboBox.ItemTemplate>
+                                            </ComboBox>
+                                            <Button MinHeight="34"
+                                                    Width="190"
+                                                    HorizontalAlignment="Left"
+                                                    Content="Apply Outcome"
+                                                    Command="{Binding ApplyOutreachOutcomeCommand}" />
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>
@@ -246,6 +260,7 @@
                                         <TextBlock Text="Show Metadata" FontWeight="SemiBold" Foreground="#111827" />
                                         <TextBlock Text="{Binding SelectedLanguageDisplay, StringFormat='Language: {0}'}" />
                                         <TextBlock Text="{Binding SelectedPriorityDisplay, StringFormat='Outreach priority: {0}'}" />
+                                        <TextBlock Text="{Binding SelectedNewestEpisodeDisplay, StringFormat='Newest episode: {0}'}" />
                                         <TextBlock Text="{Binding SelectedScoreDisplay, StringFormat='Total score: {0}'}"
                                                    ToolTip.Tip="Final ranking score. Calculated as a weighted blend of audience proxy, publishing consistency, and topic match, then multiplied by recency activity." />
                                         <TextBlock Text="Feed URL" />
