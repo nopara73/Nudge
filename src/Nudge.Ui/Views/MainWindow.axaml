@@ -182,7 +182,7 @@
                     <Border Grid.Column="1" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="12">
                         <ScrollViewer>
                             <StackPanel Spacing="10">
-                                <TextBlock Text="Selected Target" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="Selected Podcast" FontSize="16" FontWeight="SemiBold"/>
 
                                 <Border IsVisible="{Binding HasNoQueueSelection}"
                                         Background="#FFFFFF"
@@ -215,7 +215,8 @@
                                         <StackPanel Spacing="8">
                                             <TextBlock Text="Snooze" FontWeight="SemiBold" Foreground="#111827" />
                                             <ComboBox ItemsSource="{Binding SnoozePresetOptions}"
-                                                      SelectedItem="{Binding SelectedSnoozePreset}">
+                                                      SelectedItem="{Binding SelectedSnoozePreset}"
+                                                      Width="190">
                                                 <ComboBox.ItemTemplate>
                                                     <DataTemplate>
                                                         <TextBlock Text="{Binding Label}" />
@@ -225,7 +226,7 @@
                                             <TextBlock Text="{Binding SnoozeUntilDisplay}" FontWeight="SemiBold" />
                                             <Button Content="Snooze"
                                                     MinHeight="34"
-                                                    Width="160"
+                                                    Width="190"
                                                     HorizontalAlignment="Left"
                                                     Command="{Binding SnoozeCommand}" />
                                         </StackPanel>
@@ -235,10 +236,18 @@
                                         <StackPanel Spacing="8">
                                             <TextBlock Text="Outreach Outcome" FontWeight="SemiBold" Foreground="#111827" />
                                             <ComboBox ItemsSource="{Binding OutreachOutcomeOptions}"
-                                                      SelectedItem="{Binding SelectedOutreachOutcome}">
+                                                      SelectedItem="{Binding SelectedOutreachOutcome}"
+                                                      Background="{Binding SelectedOutreachOutcome.BackgroundColor}"
+                                                      Foreground="{Binding SelectedOutreachOutcome.ForegroundColor}"
+                                                      Width="190">
                                                 <ComboBox.ItemTemplate>
                                                     <DataTemplate>
-                                                        <TextBlock Text="{Binding Label}" />
+                                                        <Border Background="{Binding BackgroundColor}"
+                                                                CornerRadius="4"
+                                                                Padding="6,4">
+                                                            <TextBlock Text="{Binding Label}"
+                                                                       Foreground="{Binding ForegroundColor}" />
+                                                        </Border>
                                                     </DataTemplate>
                                                 </ComboBox.ItemTemplate>
                                             </ComboBox>
@@ -247,6 +256,11 @@
                                                     HorizontalAlignment="Left"
                                                     Content="Apply Outcome"
                                                     Command="{Binding ApplyOutreachOutcomeCommand}" />
+                                            <Button MinHeight="34"
+                                                    Width="190"
+                                                    HorizontalAlignment="Left"
+                                                    Content="Reset Outcome"
+                                                    Command="{Binding ResetOutreachOutcomeCommand}" />
                                         </StackPanel>
                                     </Border>
                                 </StackPanel>

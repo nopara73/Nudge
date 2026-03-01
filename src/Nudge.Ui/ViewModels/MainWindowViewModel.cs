@@ -30,9 +30,9 @@ public partial class MainWindowViewModel : ViewModelBase
     ];
     private static readonly IReadOnlyList<OutreachOutcomeOption> DefaultOutreachOutcomes =
     [
-        new OutreachOutcomeOption("Contacted (waiting)", OutreachOutcomeAction.ContactedWaiting),
-        new OutreachOutcomeOption("Replied YES", OutreachOutcomeAction.RepliedYes),
-        new OutreachOutcomeOption("Replied NO", OutreachOutcomeAction.RepliedNo)
+        new OutreachOutcomeOption("Contacted (waiting)", OutreachOutcomeAction.ContactedWaiting, "#FEF3C7", "#92400E"),
+        new OutreachOutcomeOption("Replied YES", OutreachOutcomeAction.RepliedYes, "#DCFCE7", "#166534"),
+        new OutreachOutcomeOption("Replied NO", OutreachOutcomeAction.RepliedNo, "#FEE2E2", "#991B1B")
     ];
 
     private static readonly string[] DefaultRunKeywords =
@@ -142,6 +142,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(ConfirmFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenFeedUrlCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ResetOutreachOutcomeCommand))]
     private bool isBusy;
 
     [ObservableProperty]
@@ -152,6 +153,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveAnnotationCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenFeedUrlCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ResetOutreachOutcomeCommand))]
     private QueueItem? selectedQueueItem;
 
     [ObservableProperty]
@@ -650,6 +652,33 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool CanApplyOutreachOutcome()
     {
         return SelectedQueueItem is not null && SelectedOutreachOutcome is not null && !IsBusy;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanResetOutreachOutcome))]
+    private async Task ResetOutreachOutcomeAsync()
+    {
+        if (SelectedQueueItem is null)
+        {
+            return;
+        }
+
+        IsBusy = true;
+        try
+        {
+            await _repository.ResetOutcomeAsync(SelectedQueueItem, QueueTags, QueueNote);
+            RunStatus = $"Reset outreach outcome for {SelectedQueueItem.ShowName} to New.";
+            await RefreshQueueAsync();
+            await RefreshHistoryAsync();
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanResetOutreachOutcome()
+    {
+        return SelectedQueueItem is not null && !IsBusy;
     }
 
     [RelayCommand]
@@ -1241,7 +1270,11 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     public sealed record SnoozePresetOption(string Label, int Amount, SnoozePresetUnit Unit);
-    public sealed record OutreachOutcomeOption(string Label, OutreachOutcomeAction Action);
+    public sealed record OutreachOutcomeOption(
+        string Label,
+        OutreachOutcomeAction Action,
+        string BackgroundColor,
+        string ForegroundColor);
 
     public sealed class QueueStateGroup(string header, ObservableCollection<QueueItem> items)
     {

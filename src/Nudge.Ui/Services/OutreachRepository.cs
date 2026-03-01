@@ -299,6 +299,22 @@ public sealed class OutreachRepository
             cancellationToken: cancellationToken);
     }
 
+    public Task ResetOutcomeAsync(QueueItem item, string tags, string note, CancellationToken cancellationToken = default)
+    {
+        return ApplyStateChangeAsync(
+            item.IdentityKey,
+            OutreachState.New,
+            "ResetOutcome",
+            _timeProvider.GetUtcNow(),
+            tags,
+            note,
+            cooldownUntilUtc: null,
+            snoozeUntilUtc: null,
+            contactedAtUtc: null,
+            manualContactEmail: item.ManualContactEmail,
+            cancellationToken: cancellationToken);
+    }
+
     public async Task SaveAnnotationAsync(QueueItem item, string tags, string note, string? manualContactEmail, CancellationToken cancellationToken = default)
     {
         var now = _timeProvider.GetUtcNow();
