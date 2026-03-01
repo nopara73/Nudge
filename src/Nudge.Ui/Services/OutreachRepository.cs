@@ -128,7 +128,8 @@ public sealed class OutreachRepository
                     WHEN 'Snoozed' THEN 2
                     WHEN 'RepliedYes' THEN 3
                     WHEN 'RepliedNo' THEN 4
-                    ELSE 5
+                    WHEN 'Dismissed' THEN 5
+                    ELSE 6
                 END,
                 COALESCE(lrt.Score, 0.0) DESC,
                 COALESCE(lrt.ShowName, ts.ShowName, ts.IdentityKey) COLLATE NOCASE ASC
@@ -273,6 +274,22 @@ public sealed class OutreachRepository
             item.IdentityKey,
             OutreachState.RepliedNo,
             "MarkedRepliedNo",
+            _timeProvider.GetUtcNow(),
+            tags,
+            note,
+            cooldownUntilUtc: null,
+            snoozeUntilUtc: null,
+            contactedAtUtc: item.ContactedAtUtc,
+            manualContactEmail: item.ManualContactEmail,
+            cancellationToken: cancellationToken);
+    }
+
+    public Task MarkDismissedAsync(QueueItem item, string tags, string note, CancellationToken cancellationToken = default)
+    {
+        return ApplyStateChangeAsync(
+            item.IdentityKey,
+            OutreachState.Dismissed,
+            "MarkedDismissed",
             _timeProvider.GetUtcNow(),
             tags,
             note,

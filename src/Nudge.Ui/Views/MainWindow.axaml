@@ -238,8 +238,7 @@
                                             <TextBlock Text="Outreach Outcome" FontWeight="SemiBold" Foreground="#111827" />
                                             <ComboBox ItemsSource="{Binding OutreachOutcomeOptions}"
                                                       SelectedItem="{Binding SelectedOutreachOutcome}"
-                                                      Background="{Binding SelectedOutreachOutcome.BackgroundColor}"
-                                                      Foreground="{Binding SelectedOutreachOutcome.ForegroundColor}"
+                                                      MaxDropDownHeight="260"
                                                       Width="190">
                                                 <ComboBox.ItemTemplate>
                                                     <DataTemplate>
