@@ -216,7 +216,8 @@ public sealed class PodcastRankingPipeline(
                 .Select(e => new RankedEpisode
                 {
                     Title = e.Title,
-                    Url = e.Url
+                    Url = e.Url,
+                    PublishedAtUtc = e.PublishedAtUtc
                 })
                 .ToArray()
         };

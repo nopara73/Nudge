@@ -90,4 +90,7 @@ public sealed class CliOutputEpisode
 
     [JsonPropertyName("url")]
     public string? Url { get; init; }
+
+    [JsonPropertyName("publishedAtUtc")]
+    public DateTimeOffset? PublishedAtUtc { get; init; }
 }

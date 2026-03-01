@@ -25,4 +25,5 @@ public sealed record RankedEpisode
 {
     public required string Title { get; init; }
     public string? Url { get; init; }
+    public DateTimeOffset? PublishedAtUtc { get; init; }
 }

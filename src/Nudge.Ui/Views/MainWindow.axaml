@@ -26,7 +26,7 @@
         <Border Grid.Row="1" Background="#1F2937" CornerRadius="8" Padding="12" Margin="0,10,0,0">
             <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
                 <TextBlock Text="{Binding RunStatus}" Foreground="White" TextWrapping="Wrap" VerticalAlignment="Center" />
-                <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" Text="{Binding ContactableCount, StringFormat='Contactable: {0}'}" />
+                <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" Text="{Binding ContactableCount, StringFormat='Tracked: {0}'}" />
                 <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
                     <ProgressBar Width="100" IsIndeterminate="True" IsVisible="{Binding IsBusy}" />
                     <TextBlock Text="Working..." Foreground="White" IsVisible="{Binding IsBusy}" />
@@ -87,7 +87,7 @@
                                            Foreground="#6B7280" />
 
                                 <TextBlock Text="Top Results To Keep" FontWeight="SemiBold" />
-                                <TextBox Text="{Binding RunTop}" Width="180" Watermark="30" HorizontalAlignment="Left" />
+                                <TextBox Text="{Binding RunTop}" Width="180" Watermark="3" HorizontalAlignment="Left" />
                                 <TextBlock Text="Keeps only the highest-ranked targets from this run."
                                            TextWrapping="Wrap"
                                            Foreground="#6B7280" />
@@ -139,27 +139,34 @@
 
             <TabItem Header="Tracker">
                 <Grid ColumnDefinitions="2*,3*" ColumnSpacing="12" Margin="10">
-                    <StackPanel Spacing="8">
-                        <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
-                            <Button Content="Refresh Queue" Command="{Binding RefreshQueueCommand}" />
-                        </Grid>
-                        <Border Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="8">
-                            <ListBox ItemsSource="{Binding QueueItems}" SelectedItem="{Binding SelectedQueueItem}">
-                                <ListBox.ItemTemplate>
-                                    <DataTemplate>
-                                        <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
-                                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" RowSpacing="2" ColumnSpacing="8">
-                                                <TextBlock Text="{Binding ShowName}" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap" />
-                                                <TextBlock Grid.Column="1" Foreground="#111827" FontWeight="SemiBold" Text="{Binding Score, StringFormat='Score {0:F3}'}" />
-                                                <TextBlock Grid.Row="1" Foreground="#4B5563" Text="{Binding State, StringFormat='State: {0}'}" />
-                                            </Grid>
-                                        </Border>
-                                    </DataTemplate>
-                                </ListBox.ItemTemplate>
-                            </ListBox>
+                    <Grid RowDefinitions="*,Auto" RowSpacing="8">
+                        <Border Grid.Row="0" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="8">
+                            <ScrollViewer VerticalScrollBarVisibility="Auto">
+                                <ItemsControl ItemsSource="{Binding QueueGroups}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <Expander Header="{Binding Header}" IsExpanded="True" Margin="0,0,0,8">
+                                                <ListBox ItemsSource="{Binding Items}"
+                                                         SelectedItem="{ReflectionBinding $parent[Window].DataContext.SelectedQueueItem}">
+                                                    <ListBox.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
+                                                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                                                    <TextBlock Text="{Binding ShowName}" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap" />
+                                                                    <TextBlock Grid.Column="1" Foreground="#111827" FontWeight="SemiBold" Text="{Binding Score, StringFormat='Score {0:F3}'}" />
+                                                                </Grid>
+                                                            </Border>
+                                                        </DataTemplate>
+                                                    </ListBox.ItemTemplate>
+                                                </ListBox>
+                                            </Expander>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                            </ScrollViewer>
                         </Border>
-                        <TextBlock Text="{Binding QueueEmptyMessage}" Foreground="#6B7280" TextWrapping="Wrap" />
-                    </StackPanel>
+                        <TextBlock Grid.Row="1" Text="{Binding QueueEmptyMessage}" Foreground="#6B7280" TextWrapping="Wrap" />
+                    </Grid>
 
                     <Border Grid.Column="1" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="12">
                         <ScrollViewer>
@@ -242,14 +249,15 @@
                                         <TextBlock Text="{Binding SelectedScoreDisplay, StringFormat='Total score: {0}'}"
                                                    ToolTip.Tip="Final ranking score. Calculated as a weighted blend of audience proxy, publishing consistency, and topic match, then multiplied by recency activity." />
                                         <TextBlock Text="Feed URL" />
-                                        <TextBox IsReadOnly="True"
-                                                 Text="{Binding SelectedFeedUrl}"
-                                                 TextWrapping="Wrap"
-                                                 AcceptsReturn="True"
-                                                 MinHeight="48" />
-                                        <Button Content="Open Feed URL"
-                                                Width="160"
+                                        <Button Content="{Binding SelectedFeedUrl}"
+                                                Background="Transparent"
+                                                BorderThickness="0"
+                                                Padding="0"
                                                 HorizontalAlignment="Left"
+                                                HorizontalContentAlignment="Left"
+                                                Foreground="#1D4ED8"
+                                                FontWeight="SemiBold"
+                                                ToolTip.Tip="{Binding SelectedFeedUrl}"
                                                 Command="{Binding OpenFeedUrlCommand}" />
                                     </StackPanel>
                                 </Border>
@@ -289,11 +297,15 @@
                                 <TextBlock Text="{Binding SelectedNicheFitHighlightsEmptyMessage}" Foreground="#6B7280" TextWrapping="Wrap" />
 
                                 <TextBlock Text="Recent Episode Titles" FontWeight="SemiBold"/>
+                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8" Margin="18,0,0,4">
+                                    <TextBlock Text="Title" FontWeight="SemiBold" Foreground="#374151" />
+                                    <TextBlock Grid.Column="1" Text="Release (UTC)" FontWeight="SemiBold" Foreground="#374151" />
+                                </Grid>
                                 <ItemsControl ItemsSource="{Binding SelectedRecentEpisodes}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate x:DataType="model:QueueEpisode">
                                             <Grid RowDefinitions="Auto,Auto" Margin="0,0,0,6">
-                                                <Grid ColumnDefinitions="Auto,*" ColumnSpacing="6">
+                                                <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="6">
                                                     <TextBlock Text="•" Foreground="#6B7280" VerticalAlignment="Top" />
                                                     <Button Grid.Column="1"
                                                             Background="Transparent"
@@ -307,6 +319,20 @@
                                                             Command="{ReflectionBinding $parent[Window].DataContext.OpenEpisodeCommand}"
                                                             CommandParameter="{Binding .}"
                                                             Content="{Binding Title}" />
+                                                    <TextBlock Grid.Column="2"
+                                                               Margin="8,0,0,0"
+                                                               VerticalAlignment="Center"
+                                                               Foreground="#6B7280"
+                                                               FontSize="12"
+                                                               Text="{Binding PublishedAtUtc, StringFormat='{}{0:yyyy-MM-dd HH:mm}'}"
+                                                               IsVisible="{Binding HasPublishedAtUtc}" />
+                                                    <TextBlock Grid.Column="2"
+                                                               Margin="8,0,0,0"
+                                                               VerticalAlignment="Center"
+                                                               Foreground="#9CA3AF"
+                                                               FontSize="12"
+                                                               Text="-"
+                                                               IsVisible="{Binding HasNoPublishedAtUtc}" />
                                                 </Grid>
                                                 <Border Grid.Row="1" Margin="18,6,0,0" Height="1" Background="#E5E7EB" />
                                             </Grid>

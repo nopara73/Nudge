@@ -8,6 +8,7 @@ namespace Nudge.Cli.Services;
 public sealed partial class RssParser : IRssParser
 {
     private static readonly XNamespace ItunesNs = "http://www.itunes.com/dtds/podcast-1.0.dtd";
+    private const int RecentEpisodeWindow = 7;
 
     public Task<Result<RssParsePayload>> ParseAsync(string feedXml, CancellationToken cancellationToken = default)
     {
@@ -78,7 +79,7 @@ public sealed partial class RssParser : IRssParser
             .OrderByDescending(e => e.Episode.PublishedAtUtc.HasValue)
             .ThenByDescending(e => e.Episode.PublishedAtUtc)
             .ThenBy(e => e.FeedOrder)
-            .Take(3)
+            .Take(RecentEpisodeWindow)
             .Select(e => e.Episode)
             .ToArray();
     }

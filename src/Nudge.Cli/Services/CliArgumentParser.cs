@@ -60,7 +60,7 @@ public static class CliArgumentParser
 
         var keywordsRaw = named.TryGetValue("--keywords", out var k) ? k : positional.FirstOrDefault() ?? string.Empty;
         var daysRaw = named.TryGetValue("--published-after-days", out var d) ? d : positional.Skip(1).FirstOrDefault() ?? "30";
-        var topRaw = named.TryGetValue("--top", out var t) ? t : "10";
+        var topRaw = named.TryGetValue("--top", out var t) ? t : "3";
 
         if (!int.TryParse(daysRaw, out var days) || days < 0)
         {

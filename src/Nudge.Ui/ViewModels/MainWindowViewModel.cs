@@ -1,9 +1,13 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.IO;
 using System.Linq;
+using System.Runtime.Versioning;
+using System.Text;
 using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
+using Microsoft.Win32;
 using Nudge.Ui.Models;
 using Nudge.Ui.Services;
 
@@ -12,7 +16,8 @@ namespace Nudge.Ui.ViewModels;
 public partial class MainWindowViewModel : ViewModelBase
 {
     private const int DefaultPublishedAfterDays = 60;
-    private const int DefaultTop = 30;
+    private const int DefaultTop = 3;
+    private const int RecentEpisodeDisplayLimit = 7;
     private static readonly IReadOnlyList<SnoozePresetOption> DefaultSnoozePresets =
     [
         new SnoozePresetOption("+1 day", 1, SnoozePresetUnit.Days),
@@ -40,6 +45,14 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly OutreachRepository _repository;
     private readonly SessionStateStore _sessionStateStore;
     private readonly TimeProvider _timeProvider;
+    private static readonly IReadOnlyList<OutreachState> QueueStateDisplayOrder =
+    [
+        OutreachState.New,
+        OutreachState.ContactedWaiting,
+        OutreachState.Snoozed,
+        OutreachState.RepliedYes,
+        OutreachState.RepliedNo
+    ];
 
     public MainWindowViewModel(
         CliRunnerService cliRunner,
@@ -53,6 +66,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _timeProvider = timeProvider;
 
         QueueItems = [];
+        QueueGroups = [];
         HistoryItems = [];
         FilteredHistoryItems = [];
         SelectedNicheFitHighlights = [];
@@ -76,6 +90,7 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     public ObservableCollection<QueueItem> QueueItems { get; }
+    public ObservableCollection<QueueStateGroup> QueueGroups { get; }
     public ObservableCollection<HistoryEvent> HistoryItems { get; }
     public ObservableCollection<HistoryEvent> FilteredHistoryItems { get; }
     public ObservableCollection<string> SelectedNicheFitHighlights { get; }
@@ -107,7 +122,6 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
-    [NotifyCanExecuteChangedFor(nameof(RefreshQueueCommand))]
     [NotifyCanExecuteChangedFor(nameof(MarkContactedCommand))]
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedYesCommand))]
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedNoCommand))]
@@ -176,7 +190,7 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     public IReadOnlyList<QueueEpisode> SelectedRecentEpisodes =>
-        SelectedQueueItem?.RecentEpisodes ?? Array.Empty<QueueEpisode>();
+        SelectedQueueItem?.RecentEpisodes.Take(RecentEpisodeDisplayLimit).ToArray() ?? Array.Empty<QueueEpisode>();
 
     public string SelectedFeedUrl =>
         string.IsNullOrWhiteSpace(SelectedQueueItem?.FeedUrl) ? "-" : SelectedQueueItem!.FeedUrl;
@@ -199,7 +213,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     public string QueueEmptyMessage =>
         QueueItems.Count == 0
-            ? "No contactable targets yet. Run the workflow in the Run tab, then refresh queue."
+            ? "No tracked targets yet. Run the workflow in the Run tab to ingest results."
             : string.Empty;
 
     public string HistoryEmptyMessage =>
@@ -369,11 +383,6 @@ public partial class MainWindowViewModel : ViewModelBase
         return !IsBusy && TryBuildRunProfile().Success;
     }
 
-    private bool CanRefreshQueue()
-    {
-        return !IsBusy;
-    }
-
     [RelayCommand]
     private void ResetRunConfig()
     {
@@ -446,28 +455,23 @@ public partial class MainWindowViewModel : ViewModelBase
         return !IsBusy && IsFullResetConfirmVisible;
     }
 
-    [RelayCommand]
     private async Task RefreshQueueAsync()
     {
-        IsBusy = true;
-        try
-        {
-            var queue = await _repository.GetContactableQueueAsync();
-            QueueItems.Clear();
-            foreach (var item in queue)
-            {
-                QueueItems.Add(item);
-            }
+        var previousSelectedIdentity = SelectedQueueItem?.IdentityKey;
+        var queue = await _repository.GetTrackerItemsAsync();
 
-            SelectedQueueItem = QueueItems.FirstOrDefault();
-            OnPropertyChanged(nameof(ContactableCount));
-            OnPropertyChanged(nameof(QueueEmptyMessage));
-            RunStatus = $"Queue refreshed: {QueueItems.Count} contactable target(s).";
-        }
-        finally
+        QueueItems.Clear();
+        foreach (var item in queue)
         {
-            IsBusy = false;
+            QueueItems.Add(item);
         }
+
+        RebuildQueueGroups();
+        SelectedQueueItem = QueueItems.FirstOrDefault(item => item.IdentityKey == previousSelectedIdentity) ??
+                            QueueItems.FirstOrDefault();
+
+        OnPropertyChanged(nameof(ContactableCount));
+        OnPropertyChanged(nameof(QueueEmptyMessage));
     }
 
     [RelayCommand]
@@ -628,19 +632,13 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        try
+        if (TryOpenUrlInNewWindow(uri, out var launchError))
         {
-            Process.Start(new ProcessStartInfo
-            {
-                FileName = uri.ToString(),
-                UseShellExecute = true
-            });
-            RunStatus = $"Opened feed URL for '{SelectedQueueItem.ShowName}'.";
+            RunStatus = $"Opened feed URL for '{SelectedQueueItem.ShowName}' in a new browser window.";
+            return;
         }
-        catch (Exception ex)
-        {
-            RunStatus = $"Unable to open feed URL: {ex.Message}";
-        }
+
+        RunStatus = $"Unable to open feed URL: {launchError}";
     }
 
     private bool CanOpenFeedUrl()
@@ -665,19 +663,126 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (TryOpenUrlInNewWindow(uri, out var launchError))
+        {
+            RunStatus = $"Opened episode link for '{episode.Title}' in a new browser window.";
+            return;
+        }
+
+        RunStatus = $"Unable to open episode link: {launchError}";
+    }
+
+    private static bool TryOpenUrlInNewWindow(Uri uri, out string error)
+    {
         try
         {
+            if (OperatingSystem.IsWindows())
+            {
+                var command = GetDefaultBrowserOpenCommand();
+                if (!string.IsNullOrWhiteSpace(command) &&
+                    TryExtractExecutablePath(command, out var executablePath) &&
+                    TryBuildNewWindowArguments(executablePath, uri, out var arguments))
+                {
+                    Process.Start(new ProcessStartInfo
+                    {
+                        FileName = executablePath,
+                        Arguments = arguments,
+                        UseShellExecute = false
+                    });
+
+                    error = string.Empty;
+                    return true;
+                }
+
+                error = "The default browser does not expose a supported 'new window' launch mode.";
+                return false;
+            }
+
             Process.Start(new ProcessStartInfo
             {
                 FileName = uri.ToString(),
                 UseShellExecute = true
             });
-            RunStatus = $"Opened episode link for '{episode.Title}'.";
+
+            error = string.Empty;
+            return true;
         }
         catch (Exception ex)
         {
-            RunStatus = $"Unable to open episode link: {ex.Message}";
+            error = ex.Message;
+            return false;
         }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static string? GetDefaultBrowserOpenCommand()
+    {
+        const string userChoicePath = @"Software\Microsoft\Windows\Shell\Associations\UrlAssociations\http\UserChoice";
+        using var userChoiceKey = Registry.CurrentUser.OpenSubKey(userChoicePath);
+        var progId = userChoiceKey?.GetValue("ProgId") as string;
+        if (string.IsNullOrWhiteSpace(progId))
+        {
+            return null;
+        }
+
+        using var openCommandKey = Registry.ClassesRoot.OpenSubKey($@"{progId}\shell\open\command");
+        return openCommandKey?.GetValue(null) as string;
+    }
+
+    private static bool TryExtractExecutablePath(string command, out string executablePath)
+    {
+        executablePath = string.Empty;
+        var trimmed = command.Trim();
+        if (string.IsNullOrWhiteSpace(trimmed))
+        {
+            return false;
+        }
+
+        if (trimmed.StartsWith('\"'))
+        {
+            var closingQuoteIndex = trimmed.IndexOf('\"', 1);
+            if (closingQuoteIndex <= 1)
+            {
+                return false;
+            }
+
+            executablePath = trimmed[1..closingQuoteIndex];
+            return !string.IsNullOrWhiteSpace(executablePath);
+        }
+
+        var tokenBuilder = new StringBuilder();
+        foreach (var ch in trimmed)
+        {
+            if (char.IsWhiteSpace(ch))
+            {
+                break;
+            }
+
+            tokenBuilder.Append(ch);
+        }
+
+        executablePath = tokenBuilder.ToString();
+        return !string.IsNullOrWhiteSpace(executablePath);
+    }
+
+    private static bool TryBuildNewWindowArguments(string executablePath, Uri uri, out string arguments)
+    {
+        arguments = string.Empty;
+
+        var browser = Path.GetFileNameWithoutExtension(executablePath).ToLowerInvariant();
+        var quotedUrl = $"\"{uri}\"";
+        arguments = browser switch
+        {
+            "msedge" => $"--new-window {quotedUrl}",
+            "chrome" => $"--new-window {quotedUrl}",
+            "brave" => $"--new-window {quotedUrl}",
+            "vivaldi" => $"--new-window {quotedUrl}",
+            "opera" => $"--new-window {quotedUrl}",
+            "firefox" => $"-new-window {quotedUrl}",
+            _ => string.Empty
+        };
+
+        return !string.IsNullOrWhiteSpace(arguments);
     }
 
     [RelayCommand]
@@ -724,7 +829,7 @@ public partial class MainWindowViewModel : ViewModelBase
             await RefreshHistoryAsync();
             if (QueueItems.Count == 0)
             {
-                RunStatus = "No contactable targets yet. Configure a run when ready.";
+                RunStatus = "No tracked targets yet. Configure a run when ready.";
             }
         }
         catch (Exception ex)
@@ -831,6 +936,41 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedActivityDisplay));
         OnPropertyChanged(nameof(SnoozeHelperText));
         OnPropertyChanged(nameof(SnoozeUntilDisplay));
+    }
+
+    private void RebuildQueueGroups()
+    {
+        QueueGroups.Clear();
+        var groupedByState = QueueItems
+            .GroupBy(item => item.State)
+            .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.Score).ToList());
+
+        foreach (var state in QueueStateDisplayOrder)
+        {
+            if (!groupedByState.TryGetValue(state, out var items) || items.Count == 0)
+            {
+                continue;
+            }
+
+            QueueGroups.Add(new QueueStateGroup(
+                BuildQueueStateHeader(state, items.Count),
+                new ObservableCollection<QueueItem>(items)));
+        }
+    }
+
+    private static string BuildQueueStateHeader(OutreachState state, int count)
+    {
+        var label = state switch
+        {
+            OutreachState.New => "New",
+            OutreachState.ContactedWaiting => "Contacted - waiting",
+            OutreachState.Snoozed => "Snoozed",
+            OutreachState.RepliedYes => "Replied YES",
+            OutreachState.RepliedNo => "Replied NO",
+            _ => state.ToString()
+        };
+
+        return $"{label} ({count})";
     }
 
     private void PopulateSelectedNicheFitHighlights()
@@ -960,6 +1100,12 @@ public partial class MainWindowViewModel : ViewModelBase
     }
 
     public sealed record SnoozePresetOption(string Label, int Amount, SnoozePresetUnit Unit);
+
+    public sealed class QueueStateGroup(string header, ObservableCollection<QueueItem> items)
+    {
+        public string Header { get; } = header;
+        public ObservableCollection<QueueItem> Items { get; } = items;
+    }
 
     public enum SnoozePresetUnit
     {

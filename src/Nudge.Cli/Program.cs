@@ -156,7 +156,7 @@ static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, ICo
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  Nudge.Cli --keywords \"ai,startups\" --published-after-days 60 [--top 10] [--json] [--pretty] [--use-mock] [--verbose]");
+    Console.WriteLine("  Nudge.Cli --keywords \"ai,startups\" --published-after-days 60 [--top 3] [--json] [--pretty] [--use-mock] [--verbose]");
     Console.WriteLine("  Nudge.Cli \"ai,startups\" 30");
 }
 

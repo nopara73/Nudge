@@ -62,7 +62,7 @@ public sealed class OutreachRepository
         await transaction.CommitAsync(cancellationToken);
     }
 
-    public async Task<IReadOnlyList<QueueItem>> GetContactableQueueAsync(CancellationToken cancellationToken = default)
+    public async Task<IReadOnlyList<QueueItem>> GetTrackerItemsAsync(CancellationToken cancellationToken = default)
     {
         const string sql = """
             WITH LatestRun AS (
@@ -70,37 +70,70 @@ public sealed class OutreachRepository
                 FROM Runs
                 ORDER BY GeneratedAtUtc DESC
                 LIMIT 1
+            ),
+            LatestRunTargets AS (
+                SELECT
+                    rt.IdentityKey,
+                    rt.ShowId,
+                    rt.ShowName,
+                    rt.ContactEmail,
+                    rt.DetectedLanguage,
+                    rt.FeedUrl,
+                    rt.Score,
+                    rt.Reach,
+                    rt.Frequency,
+                    rt.NicheFit,
+                    rt.ActivityScore,
+                    rt.OutreachPriority,
+                    rt.NewestEpisodePublishedAtUtc,
+                    rt.RecentEpisodeTitlesJson,
+                    rt.NicheFitBreakdownJson,
+                    ROW_NUMBER() OVER (
+                        PARTITION BY rt.IdentityKey
+                        ORDER BY rt.Score DESC, rt.Id DESC
+                    ) AS RowNum
+                FROM RunTargets rt
+                JOIN LatestRun lr ON rt.RunId = lr.Id
             )
             SELECT
-                rt.IdentityKey,
-                rt.ShowId,
-                rt.ShowName,
-                rt.ContactEmail,
+                ts.IdentityKey,
+                lrt.ShowId,
+                COALESCE(lrt.ShowName, ts.ShowName, ts.IdentityKey) AS ShowName,
+                COALESCE(lrt.ContactEmail, ts.ContactEmail) AS ContactEmail,
                 ts.ManualContactEmail,
-                rt.DetectedLanguage,
-                rt.FeedUrl,
-                rt.Score,
-                rt.Reach,
-                rt.Frequency,
-                rt.NicheFit,
-                rt.ActivityScore,
-                rt.OutreachPriority,
-                rt.NewestEpisodePublishedAtUtc,
-                rt.RecentEpisodeTitlesJson,
-                rt.NicheFitBreakdownJson,
+                COALESCE(lrt.DetectedLanguage, '') AS DetectedLanguage,
+                COALESCE(lrt.FeedUrl, '') AS FeedUrl,
+                COALESCE(lrt.Score, 0.0) AS Score,
+                COALESCE(lrt.Reach, 0.0) AS Reach,
+                COALESCE(lrt.Frequency, 0.0) AS Frequency,
+                COALESCE(lrt.NicheFit, 0.0) AS NicheFit,
+                COALESCE(lrt.ActivityScore, 0.0) AS ActivityScore,
+                COALESCE(lrt.OutreachPriority, 'Low') AS OutreachPriority,
+                lrt.NewestEpisodePublishedAtUtc,
+                COALESCE(lrt.RecentEpisodeTitlesJson, '[]') AS RecentEpisodeTitlesJson,
+                COALESCE(lrt.NicheFitBreakdownJson, '{}') AS NicheFitBreakdownJson,
                 COALESCE(ts.State, 'New') AS State,
                 ts.CooldownUntilUtc,
                 ts.SnoozeUntilUtc,
                 ts.ContactedAtUtc,
                 COALESCE(ts.Tags, '') AS Tags,
                 COALESCE(ts.Note, '') AS Note
-            FROM RunTargets rt
-            JOIN LatestRun lr ON rt.RunId = lr.Id
-            LEFT JOIN TargetStates ts ON rt.IdentityKey = ts.IdentityKey
-            ORDER BY rt.Score DESC
+            FROM TargetStates ts
+            LEFT JOIN LatestRunTargets lrt
+                ON ts.IdentityKey = lrt.IdentityKey AND lrt.RowNum = 1
+            ORDER BY
+                CASE COALESCE(ts.State, 'New')
+                    WHEN 'New' THEN 0
+                    WHEN 'ContactedWaiting' THEN 1
+                    WHEN 'Snoozed' THEN 2
+                    WHEN 'RepliedYes' THEN 3
+                    WHEN 'RepliedNo' THEN 4
+                    ELSE 5
+                END,
+                COALESCE(lrt.Score, 0.0) DESC,
+                COALESCE(lrt.ShowName, ts.ShowName, ts.IdentityKey) COLLATE NOCASE ASC
             """;
 
-        var now = _timeProvider.GetUtcNow();
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
         await using var command = connection.CreateCommand();
@@ -114,11 +147,6 @@ public sealed class OutreachRepository
             var cooldownUntil = ReadDateTimeOffset(reader, "CooldownUntilUtc");
             var snoozeUntil = ReadDateTimeOffset(reader, "SnoozeUntilUtc");
 
-            if (!IsContactable(state, cooldownUntil, snoozeUntil, now))
-            {
-                continue;
-            }
-
             var recentEpisodesJson = reader.GetString(reader.GetOrdinal("RecentEpisodeTitlesJson"));
             var recentEpisodes = ParseRecentEpisodesJson(recentEpisodesJson);
 
@@ -131,7 +159,7 @@ public sealed class OutreachRepository
             queue.Add(new QueueItem
             {
                 IdentityKey = reader.GetString(reader.GetOrdinal("IdentityKey")),
-                ShowId = reader.GetString(reader.GetOrdinal("ShowId")),
+                ShowId = ReadNullableString(reader, "ShowId") ?? string.Empty,
                 ShowName = reader.GetString(reader.GetOrdinal("ShowName")),
                 ContactEmail = contactEmail,
                 ManualContactEmail = manualContactEmail,
@@ -430,7 +458,12 @@ public sealed class OutreachRepository
         command.Parameters.AddWithValue("@score", item.Score);
         command.Parameters.AddWithValue("@newestEpisodePublishedAtUtc", item.NewestEpisodePublishedAtUtc?.ToString("O") ?? (object)DBNull.Value);
         var recentEpisodes = item.RecentEpisodes.Count > 0
-            ? item.RecentEpisodes.Select(e => new StoredEpisode { Title = e.Title, Url = e.Url }).ToArray()
+            ? item.RecentEpisodes.Select(e => new StoredEpisode
+            {
+                Title = e.Title,
+                Url = e.Url,
+                PublishedAtUtc = e.PublishedAtUtc
+            }).ToArray()
             : item.RecentEpisodeTitles.Select(title => new StoredEpisode { Title = title }).ToArray();
         command.Parameters.AddWithValue("@recentEpisodeTitlesJson", JsonSerializer.Serialize(recentEpisodes));
         command.Parameters.AddWithValue("@nicheFitBreakdownJson", JsonSerializer.Serialize(item.NicheFitBreakdown));
@@ -686,26 +719,6 @@ public sealed class OutreachRepository
         command.ExecuteNonQuery();
     }
 
-    private static bool IsContactable(OutreachState state, DateTimeOffset? cooldownUntilUtc, DateTimeOffset? snoozeUntilUtc, DateTimeOffset now)
-    {
-        if (state == OutreachState.RepliedNo || state == OutreachState.RepliedYes)
-        {
-            return false;
-        }
-
-        if (state == OutreachState.ContactedWaiting && cooldownUntilUtc.HasValue && cooldownUntilUtc.Value > now)
-        {
-            return false;
-        }
-
-        if (state == OutreachState.Snoozed && snoozeUntilUtc.HasValue && snoozeUntilUtc.Value > now)
-        {
-            return false;
-        }
-
-        return true;
-    }
-
     private static OutreachState ParseState(string value)
     {
         return Enum.TryParse<OutreachState>(value, out var parsed) ? parsed : OutreachState.New;
@@ -776,7 +789,8 @@ public sealed class OutreachRepository
                         episodes.Add(new QueueEpisode
                         {
                             Title = title.Trim(),
-                            Url = GetEpisodeProperty(element, "url")
+                            Url = GetEpisodeProperty(element, "url"),
+                            PublishedAtUtc = GetEpisodeDateTimeOffsetProperty(element, "publishedAtUtc")
                         });
                         break;
                     }
@@ -808,10 +822,35 @@ public sealed class OutreachRepository
         return null;
     }
 
+    private static DateTimeOffset? GetEpisodeDateTimeOffsetProperty(JsonElement element, string propertyName)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase) ||
+                property.Value.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var rawValue = property.Value.GetString();
+            if (string.IsNullOrWhiteSpace(rawValue))
+            {
+                return null;
+            }
+
+            return DateTimeOffset.TryParse(rawValue, CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind, out var parsedValue)
+                ? parsedValue
+                : null;
+        }
+
+        return null;
+    }
+
     private sealed class StoredEpisode
     {
         public required string Title { get; init; }
         public string? Url { get; init; }
+        public DateTimeOffset? PublishedAtUtc { get; init; }
     }
 
     private sealed class TargetStateRow
