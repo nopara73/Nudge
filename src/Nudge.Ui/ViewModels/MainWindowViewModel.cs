@@ -58,6 +58,7 @@ public partial class MainWindowViewModel : ViewModelBase
             ? DefaultTop.ToString()
             : session.RunTop;
         EvaluateRunConfigurationState();
+        _ = LoadInitialDataAsync();
     }
 
     public ObservableCollection<QueueItem> QueueItems { get; }
@@ -90,9 +91,20 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshQueueCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MarkContactedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MarkRepliedYesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MarkRepliedNoCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SaveAnnotationCommand))]
     private bool isBusy;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(MarkContactedCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MarkRepliedYesCommand))]
+    [NotifyCanExecuteChangedFor(nameof(MarkRepliedNoCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SaveAnnotationCommand))]
     private QueueItem? selectedQueueItem;
 
     [ObservableProperty]
@@ -105,6 +117,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private string manualContactEmail = string.Empty;
 
     [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     private DateTimeOffset? snoozeUntilUtc;
 
     [ObservableProperty]
@@ -134,6 +147,23 @@ public partial class MainWindowViewModel : ViewModelBase
     public IReadOnlyList<string> SelectedRecentEpisodeTitles =>
         SelectedQueueItem?.RecentEpisodeTitles ?? Array.Empty<string>();
 
+    public bool HasQueueSelection => SelectedQueueItem is not null;
+
+    public string QueueEmptyMessage =>
+        QueueItems.Count == 0
+            ? "No contactable targets yet. Run the workflow in the Run tab, then refresh queue."
+            : string.Empty;
+
+    public string HistoryEmptyMessage =>
+        FilteredHistoryItems.Count == 0
+            ? "No history events match this filter."
+            : string.Empty;
+
+    public string SelectedEpisodesEmptyMessage =>
+        SelectedRecentEpisodeTitles.Count == 0
+            ? "No recent episode titles are available for this target."
+            : string.Empty;
+
     partial void OnCurrentViewIndexChanged(int value)
     {
         PersistSession();
@@ -146,16 +176,22 @@ public partial class MainWindowViewModel : ViewModelBase
             QueueTags = string.Empty;
             QueueNote = string.Empty;
             ManualContactEmail = string.Empty;
+            SnoozeUntilUtc = null;
+            OnPropertyChanged(nameof(HasQueueSelection));
             OnPropertyChanged(nameof(SelectedItemSummary));
             OnPropertyChanged(nameof(SelectedRecentEpisodeTitles));
+            OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
             return;
         }
 
         QueueTags = value.Tags;
         QueueNote = value.Note;
         ManualContactEmail = value.ManualContactEmail ?? value.ContactEmail ?? string.Empty;
+        SnoozeUntilUtc = value.SnoozeUntilUtc;
+        OnPropertyChanged(nameof(HasQueueSelection));
         OnPropertyChanged(nameof(SelectedItemSummary));
         OnPropertyChanged(nameof(SelectedRecentEpisodeTitles));
+        OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
         _ = RefreshHistoryAsync(value.IdentityKey);
     }
 
@@ -229,6 +265,11 @@ public partial class MainWindowViewModel : ViewModelBase
         return !IsBusy && TryBuildRunProfile().Success;
     }
 
+    private bool CanRefreshQueue()
+    {
+        return !IsBusy;
+    }
+
     [RelayCommand]
     private void ResetRunConfig()
     {
@@ -253,6 +294,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
             SelectedQueueItem = QueueItems.FirstOrDefault();
             OnPropertyChanged(nameof(ContactableCount));
+            OnPropertyChanged(nameof(QueueEmptyMessage));
             RunStatus = $"Queue refreshed: {QueueItems.Count} contactable target(s).";
         }
         finally
@@ -283,6 +325,11 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private bool CanMarkContacted()
+    {
+        return SelectedQueueItem is not null && !IsBusy;
+    }
+
     [RelayCommand]
     private async Task MarkRepliedYesAsync()
     {
@@ -305,6 +352,11 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private bool CanMarkRepliedYes()
+    {
+        return SelectedQueueItem is not null && !IsBusy;
+    }
+
     [RelayCommand]
     private async Task MarkRepliedNoAsync()
     {
@@ -325,6 +377,11 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             IsBusy = false;
         }
+    }
+
+    private bool CanMarkRepliedNo()
+    {
+        return SelectedQueueItem is not null && !IsBusy;
     }
 
     [RelayCommand]
@@ -350,6 +407,11 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    private bool CanSnooze()
+    {
+        return SelectedQueueItem is not null && SnoozeUntilUtc is not null && !IsBusy;
+    }
+
     [RelayCommand]
     private async Task SaveAnnotationAsync()
     {
@@ -370,6 +432,11 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             IsBusy = false;
         }
+    }
+
+    private bool CanSaveAnnotation()
+    {
+        return SelectedQueueItem is not null && !IsBusy;
     }
 
     [RelayCommand]
@@ -403,6 +470,25 @@ public partial class MainWindowViewModel : ViewModelBase
         foreach (var item in filtered)
         {
             FilteredHistoryItems.Add(item);
+        }
+
+        OnPropertyChanged(nameof(HistoryEmptyMessage));
+    }
+
+    private async Task LoadInitialDataAsync()
+    {
+        try
+        {
+            await RefreshQueueAsync();
+            await RefreshHistoryAsync();
+            if (QueueItems.Count == 0)
+            {
+                RunStatus = "No contactable targets yet. Configure a run when ready.";
+            }
+        }
+        catch (Exception ex)
+        {
+            RunStatus = $"Ready, but failed to load saved data: {ex.Message}";
         }
     }
 

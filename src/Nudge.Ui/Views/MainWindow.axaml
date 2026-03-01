@@ -7,21 +7,28 @@
         x:Class="Nudge.Ui.Views.MainWindow"
         x:DataType="vm:MainWindowViewModel"
         Icon="/Assets/avalonia-logo.ico"
+        MinWidth="980"
+        MinHeight="680"
+        Background="#F8FAFC"
         Title="Nudge">
 
-    <Grid RowDefinitions="*,Auto" Margin="16">
+    <Grid RowDefinitions="*,Auto" RowSpacing="10" Margin="16">
         <Border Grid.Row="1" Background="#1F2937" CornerRadius="8" Padding="12" Margin="0,10,0,0">
-            <Grid ColumnDefinitions="*,Auto">
+            <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="12">
                 <TextBlock Text="{Binding RunStatus}" Foreground="White" TextWrapping="Wrap" VerticalAlignment="Center" />
                 <TextBlock Grid.Column="1" VerticalAlignment="Center" FontWeight="SemiBold" Foreground="White" Text="{Binding ContactableCount, StringFormat='Contactable: {0}'}" />
+                <StackPanel Grid.Column="2" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
+                    <ProgressBar Width="100" IsIndeterminate="True" IsVisible="{Binding IsBusy}" />
+                    <TextBlock Text="Working..." Foreground="White" IsVisible="{Binding IsBusy}" />
+                </StackPanel>
             </Grid>
         </Border>
 
         <TabControl Grid.Row="0" SelectedIndex="{Binding CurrentViewIndex}">
             <TabItem Header="Run">
                 <ScrollViewer>
-                    <StackPanel Spacing="12" Margin="8">
-                        <Border Background="#F3F4F6" CornerRadius="8" Padding="12">
+                    <StackPanel Spacing="12" Margin="10">
+                        <Border Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="12">
                             <StackPanel Spacing="10">
                                 <TextBlock Text="Run Configuration" FontWeight="SemiBold" FontSize="16" />
 
@@ -33,8 +40,7 @@
                                          Watermark="masters athlete, over 40 fitness, longevity performance"
                                          TextWrapping="Wrap"
                                          AcceptsReturn="True"
-                                         MinHeight="60"
-                                         HorizontalAlignment="Left" />
+                                         MinHeight="60" />
                                 <TextBlock Text="Use specific phrases to improve podcast relevance."
                                            TextWrapping="Wrap"
                                            Foreground="#6B7280" />
@@ -55,22 +61,41 @@
 
                                 <Button Content="Run CLI + Ingest"
                                         Command="{Binding RunFromConfigCommand}"
+                                        Background="#1D4ED8"
+                                        Foreground="White"
                                         HorizontalAlignment="Left"
                                         MinWidth="170" />
                             </StackPanel>
                         </Border>
 
-                        <Border Background="#F9FAFB" CornerRadius="8" Padding="10">
+                        <Border Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="10">
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Command Preview" FontWeight="SemiBold"/>
-                                <TextBox IsReadOnly="True" Text="{Binding CommandPreview}" TextWrapping="Wrap" MinHeight="60" />
+                                <TextBlock Text="Command Preview" FontWeight="SemiBold" FontSize="14"/>
+                                <TextBox IsReadOnly="True"
+                                         Text="{Binding CommandPreview}"
+                                         TextWrapping="Wrap"
+                                         MinHeight="70"
+                                         FontFamily="Consolas"
+                                         Background="#FFFFFF"
+                                         BorderBrush="#D1D5DB"
+                                         BorderThickness="1"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
                             </StackPanel>
                         </Border>
 
-                        <Border Background="#F9FAFB" CornerRadius="8" Padding="10">
+                        <Border Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="10">
                             <StackPanel Spacing="6">
-                                <TextBlock Text="Warnings / STDERR" FontWeight="SemiBold"/>
-                                <TextBox IsReadOnly="True" Text="{Binding WarningsText}" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="150" />
+                                <TextBlock Text="Warnings / STDERR" FontWeight="SemiBold" FontSize="14"/>
+                                <TextBox IsReadOnly="True"
+                                         Text="{Binding WarningsText}"
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         MinHeight="160"
+                                         FontFamily="Consolas"
+                                         Background="#FFFFFF"
+                                         BorderBrush="#D1D5DB"
+                                         BorderThickness="1"
+                                         ScrollViewer.VerticalScrollBarVisibility="Auto" />
                             </StackPanel>
                         </Border>
                     </StackPanel>
@@ -78,87 +103,97 @@
             </TabItem>
 
             <TabItem Header="Queue">
-                <Grid ColumnDefinitions="2*,3*" ColumnSpacing="10" Margin="8">
+                <Grid ColumnDefinitions="2*,3*" ColumnSpacing="12" Margin="10">
                     <StackPanel Spacing="8">
                         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
                             <Button Content="Refresh Queue" Command="{Binding RefreshQueueCommand}" />
                             <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{Binding ContactableCount, StringFormat='Contactable targets: {0}'}" />
                         </Grid>
-                        <ListBox ItemsSource="{Binding QueueItems}" SelectedItem="{Binding SelectedQueueItem}">
-                            <ListBox.ItemTemplate>
-                                <DataTemplate>
-                                    <Border Padding="8" Background="#374151" CornerRadius="6">
-                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="2">
-                                            <TextBlock Text="{Binding ShowName}" FontWeight="SemiBold" Foreground="White" TextWrapping="Wrap" />
-                                            <TextBlock Grid.Column="1" Foreground="White" Text="{Binding Score, StringFormat='Score {0:F3}'}" />
-                                            <TextBlock Grid.Row="1" Foreground="White" Text="{Binding EffectiveContactEmail, StringFormat='Contact: {0}'}" />
-                                            <TextBlock Grid.Row="2" Foreground="White" Text="{Binding State, StringFormat='State: {0}'}" />
-                                        </Grid>
-                                    </Border>
-                                </DataTemplate>
-                            </ListBox.ItemTemplate>
-                        </ListBox>
+                        <Border Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="8">
+                            <ListBox ItemsSource="{Binding QueueItems}" SelectedItem="{Binding SelectedQueueItem}">
+                                <ListBox.ItemTemplate>
+                                    <DataTemplate>
+                                        <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
+                                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="2" ColumnSpacing="8">
+                                                <TextBlock Text="{Binding ShowName}" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap" />
+                                                <TextBlock Grid.Column="1" Foreground="#111827" FontWeight="SemiBold" Text="{Binding Score, StringFormat='Score {0:F3}'}" />
+                                                <TextBlock Grid.Row="1" Foreground="#4B5563" Text="{Binding EffectiveContactEmail, StringFormat='Contact: {0}'}" TextTrimming="CharacterEllipsis" />
+                                                <TextBlock Grid.Row="2" Foreground="#4B5563" Text="{Binding State, StringFormat='State: {0}'}" />
+                                            </Grid>
+                                        </Border>
+                                    </DataTemplate>
+                                </ListBox.ItemTemplate>
+                            </ListBox>
+                        </Border>
+                        <TextBlock Text="{Binding QueueEmptyMessage}" Foreground="#6B7280" TextWrapping="Wrap" />
                     </StackPanel>
 
-                    <ScrollViewer Grid.Column="1">
-                        <StackPanel Spacing="8">
-                            <TextBlock Text="Selected Target" FontSize="16" FontWeight="SemiBold"/>
-                            <TextBlock Text="{Binding SelectedItemSummary}" TextWrapping="Wrap"/>
+                    <Border Grid.Column="1" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="12">
+                        <ScrollViewer>
+                            <StackPanel Spacing="8">
+                                <TextBlock Text="Selected Target" FontSize="16" FontWeight="SemiBold"/>
+                                <TextBlock Text="{Binding SelectedItemSummary}" TextWrapping="Wrap"/>
+                                <StackPanel Spacing="8" IsEnabled="{Binding HasQueueSelection}">
+                                    <TextBlock Text="Manual Contact Email" />
+                                    <TextBox Text="{Binding ManualContactEmail}" Watermark="email@example.com" />
 
-                            <TextBlock Text="Manual Contact Email" />
-                            <TextBox Text="{Binding ManualContactEmail}" Watermark="email@example.com" />
+                                    <TextBlock Text="Tags (comma-separated)" />
+                                    <TextBox Text="{Binding QueueTags}" />
 
-                            <TextBlock Text="Tags (comma-separated)" />
-                            <TextBox Text="{Binding QueueTags}" />
+                                    <TextBlock Text="Note" />
+                                    <TextBox Text="{Binding QueueNote}" AcceptsReturn="True" MinHeight="70" TextWrapping="Wrap" />
 
-                            <TextBlock Text="Note" />
-                            <TextBox Text="{Binding QueueNote}" AcceptsReturn="True" MinHeight="70" TextWrapping="Wrap" />
+                                    <TextBlock Text="Snooze Until (date)" />
+                                    <DatePicker SelectedDate="{Binding SnoozeUntilUtc}" />
 
-                            <TextBlock Text="Snooze Until (UTC)" />
-                            <DatePicker SelectedDate="{Binding SnoozeUntilUtc}" />
+                                    <WrapPanel Orientation="Horizontal" ItemHeight="34" ItemWidth="160">
+                                        <Button Content="Save Tags/Note" Command="{Binding SaveAnnotationCommand}" />
+                                        <Button Content="Mark Contacted" Command="{Binding MarkContactedCommand}" />
+                                        <Button Content="Mark Replied YES" Command="{Binding MarkRepliedYesCommand}" Background="#166534" Foreground="White" />
+                                        <Button Content="Mark Replied NO" Command="{Binding MarkRepliedNoCommand}" Background="#991B1B" Foreground="White" />
+                                        <Button Content="Snooze" Command="{Binding SnoozeCommand}" />
+                                    </WrapPanel>
+                                </StackPanel>
 
-                            <WrapPanel Orientation="Horizontal" ItemHeight="34" ItemWidth="170">
-                                <Button Content="Save Tags/Note" Command="{Binding SaveAnnotationCommand}" />
-                                <Button Content="Mark Contacted" Command="{Binding MarkContactedCommand}" />
-                                <Button Content="Mark Replied YES" Command="{Binding MarkRepliedYesCommand}" />
-                                <Button Content="Mark Replied NO" Command="{Binding MarkRepliedNoCommand}" />
-                                <Button Content="Snooze" Command="{Binding SnoozeCommand}" />
-                            </WrapPanel>
-
-                            <TextBlock Text="Recent Episode Titles" FontWeight="SemiBold"/>
-                            <ItemsControl ItemsSource="{Binding SelectedRecentEpisodeTitles}">
-                                <ItemsControl.ItemTemplate>
-                                    <DataTemplate>
-                                        <TextBlock Text="{Binding .}" TextWrapping="Wrap" Margin="0,0,0,4"/>
-                                    </DataTemplate>
-                                </ItemsControl.ItemTemplate>
-                            </ItemsControl>
-                        </StackPanel>
-                    </ScrollViewer>
+                                <TextBlock Text="Recent Episode Titles" FontWeight="SemiBold"/>
+                                <ItemsControl ItemsSource="{Binding SelectedRecentEpisodeTitles}">
+                                    <ItemsControl.ItemTemplate>
+                                        <DataTemplate>
+                                            <TextBlock Text="{Binding .}" TextWrapping="Wrap" Margin="0,0,0,4"/>
+                                        </DataTemplate>
+                                    </ItemsControl.ItemTemplate>
+                                </ItemsControl>
+                                <TextBlock Text="{Binding SelectedEpisodesEmptyMessage}" Foreground="#6B7280" TextWrapping="Wrap" />
+                            </StackPanel>
+                        </ScrollViewer>
+                    </Border>
                 </Grid>
             </TabItem>
 
             <TabItem Header="History">
-                <Grid RowDefinitions="Auto,*" Margin="8">
+                <Grid RowDefinitions="Auto,*,Auto" Margin="10">
                     <Grid ColumnDefinitions="Auto,*,Auto" ColumnSpacing="8">
                         <TextBlock VerticalAlignment="Center" Text="Filter" />
                         <TextBox Grid.Column="1" Text="{Binding HistoryFilterText}" Watermark="identity, show, email, note..." />
                         <Button Grid.Column="2" Content="Refresh" Command="{Binding RefreshHistoryCommand}" />
                     </Grid>
-                    <ListBox Grid.Row="1" Margin="0,8,0,0" ItemsSource="{Binding FilteredHistoryItems}">
-                        <ListBox.ItemTemplate>
-                            <DataTemplate>
-                                <Border Padding="8" Background="#374151" CornerRadius="6">
-                                    <Grid RowDefinitions="Auto,Auto,Auto" RowSpacing="2">
-                                        <TextBlock Text="{Binding ShowName}" Foreground="White" FontWeight="SemiBold"/>
-                                        <TextBlock Grid.Row="1" Foreground="White" Text="{Binding EventType, StringFormat='Event: {0}'}" />
-                                        <TextBlock Grid.Row="2" Foreground="White" Text="{Binding OccurredAtUtc, StringFormat='When: {0:u}'}" />
-                                        <TextBlock Grid.Row="2" HorizontalAlignment="Right" Foreground="White" Text="{Binding IdentityKey}"/>
-                                    </Grid>
-                                </Border>
-                            </DataTemplate>
-                        </ListBox.ItemTemplate>
-                    </ListBox>
+                    <Border Grid.Row="1" Margin="0,8,0,0" Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="8">
+                        <ListBox ItemsSource="{Binding FilteredHistoryItems}">
+                            <ListBox.ItemTemplate>
+                                <DataTemplate>
+                                    <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
+                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="2" ColumnSpacing="8">
+                                            <TextBlock Text="{Binding ShowName}" Foreground="#111827" FontWeight="SemiBold"/>
+                                            <TextBlock Grid.Row="1" Foreground="#4B5563" Text="{Binding EventType, StringFormat='Event: {0}'}" />
+                                            <TextBlock Grid.Row="2" Foreground="#4B5563" Text="{Binding OccurredAtUtc, StringFormat='When: {0:u}'}" />
+                                            <TextBlock Grid.Row="2" Grid.Column="1" HorizontalAlignment="Right" Foreground="#4B5563" Text="{Binding IdentityKey}" TextTrimming="CharacterEllipsis"/>
+                                        </Grid>
+                                    </Border>
+                                </DataTemplate>
+                            </ListBox.ItemTemplate>
+                        </ListBox>
+                    </Border>
+                    <TextBlock Grid.Row="2" Margin="0,8,0,0" Text="{Binding HistoryEmptyMessage}" Foreground="#6B7280" TextWrapping="Wrap" />
                 </Grid>
             </TabItem>
         </TabControl>
