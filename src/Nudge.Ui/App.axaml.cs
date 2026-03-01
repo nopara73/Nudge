@@ -6,9 +6,8 @@ using System;
 using System.Linq;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.DependencyInjection;
-using Nudge.Core.Interfaces;
-using Nudge.Core.Services;
 using Nudge.Ui.ViewModels;
+using Nudge.Ui.Services;
 using Nudge.Ui.Views;
 
 namespace Nudge.Ui;
@@ -56,7 +55,10 @@ public partial class App : Application
     {
         var services = new ServiceCollection();
         services.AddSingleton<TimeProvider>(TimeProvider.System);
-        services.AddSingleton<IScoringService, ScoringService>();
+        services.AddSingleton<RunConfigParser>();
+        services.AddSingleton<CliRunnerService>();
+        services.AddSingleton<OutreachRepository>();
+        services.AddSingleton<SessionStateStore>();
         services.AddTransient<MainWindowViewModel>();
         return services.BuildServiceProvider();
     }
