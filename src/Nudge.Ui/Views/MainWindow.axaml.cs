@@ -1,6 +1,7 @@
 using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Platform.Storage;
+using System;
 using System.Linq;
 using Nudge.Ui.ViewModels;
 
@@ -19,8 +20,6 @@ public partial class MainWindow : Window
 
     private void OnOpened(object? sender, System.EventArgs e)
     {
-        Width = DefaultWidth;
-        Height = DefaultHeight;
         WindowStartupLocation = WindowStartupLocation.Manual;
 
         var screen = Screens.ScreenFromWindow(this) ?? Screens.Primary;
@@ -30,9 +29,24 @@ public partial class MainWindow : Window
         }
 
         var workingArea = screen.WorkingArea;
+        var scaling = RenderScaling > 0 ? RenderScaling : 1.0;
+
+        // Window Width/Height are in DIPs, but WorkingArea is in physical pixels.
+        var maxWidthDip = workingArea.Width / scaling;
+        var maxHeightDip = workingArea.Height / scaling;
+        var targetWidthDip = Math.Min(DefaultWidth, maxWidthDip);
+        var targetHeightDip = Math.Min(DefaultHeight, maxHeightDip);
+
+        Width = targetWidthDip;
+        Height = targetHeightDip;
+
+        var targetWidthPx = (int)Math.Round(targetWidthDip * scaling);
+        var targetX = workingArea.X + Math.Max(0, workingArea.Width - targetWidthPx);
+        var targetY = workingArea.Y;
+
         Position = new PixelPoint(
-            workingArea.X + workingArea.Width - (int)Width,
-            workingArea.Y);
+            targetX,
+            targetY);
     }
 
     private async void OnBrowseConfigClicked(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
