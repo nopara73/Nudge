@@ -100,6 +100,10 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(StartFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(ConfirmFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelFullResetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSnoozeTomorrowCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSnoozeIn3DaysCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSnoozeIn7DaysCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ClearSnoozeDateCommand))]
     private bool isBusy;
 
     [ObservableProperty]
@@ -108,6 +112,10 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedNoCommand))]
     [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveAnnotationCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSnoozeTomorrowCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSnoozeIn3DaysCommand))]
+    [NotifyCanExecuteChangedFor(nameof(SetSnoozeIn7DaysCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ClearSnoozeDateCommand))]
     private QueueItem? selectedQueueItem;
 
     [ObservableProperty]
@@ -173,6 +181,29 @@ public partial class MainWindowViewModel : ViewModelBase
             ? "No recent episode titles are available for this target."
             : string.Empty;
 
+    public string SnoozeHelperText
+    {
+        get
+        {
+            if (SnoozeUntilUtc is null)
+            {
+                return "Pick a future date or use a quick preset.";
+            }
+
+            var selectedDate = ToLocalDate(SnoozeUntilUtc.Value);
+            var today = GetTodayLocal();
+            var deltaDays = (selectedDate - today).Days;
+
+            if (deltaDays <= 0)
+            {
+                return "Snooze date must be in the future.";
+            }
+
+            var dayLabel = deltaDays == 1 ? "day" : "days";
+            return $"Will return to queue in {deltaDays} {dayLabel} ({selectedDate:yyyy-MM-dd}).";
+        }
+    }
+
     partial void OnCurrentViewIndexChanged(int value)
     {
         PersistSession();
@@ -190,6 +221,7 @@ public partial class MainWindowViewModel : ViewModelBase
             OnPropertyChanged(nameof(SelectedItemSummary));
             OnPropertyChanged(nameof(SelectedRecentEpisodeTitles));
             OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
+            OnPropertyChanged(nameof(SnoozeHelperText));
             return;
         }
 
@@ -201,7 +233,13 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedItemSummary));
         OnPropertyChanged(nameof(SelectedRecentEpisodeTitles));
         OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
+        OnPropertyChanged(nameof(SnoozeHelperText));
         _ = RefreshHistoryAsync(value.IdentityKey);
+    }
+
+    partial void OnSnoozeUntilUtcChanged(DateTimeOffset? value)
+    {
+        OnPropertyChanged(nameof(SnoozeHelperText));
     }
 
     partial void OnHistoryFilterTextChanged(string value)
@@ -465,11 +503,18 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        var normalizedSnoozeUtc = NormalizeSnoozeDateToUtc(SnoozeUntilUtc.Value);
+        if (!IsSnoozeDateValid(normalizedSnoozeUtc))
+        {
+            RunStatus = "Snooze date must be in the future.";
+            return;
+        }
+
         IsBusy = true;
         try
         {
-            await _repository.MarkSnoozedAsync(SelectedQueueItem, SnoozeUntilUtc.Value, QueueTags, QueueNote);
-            RunStatus = $"Snoozed {SelectedQueueItem.ShowName} until {SnoozeUntilUtc:yyyy-MM-dd}.";
+            await _repository.MarkSnoozedAsync(SelectedQueueItem, normalizedSnoozeUtc, QueueTags, QueueNote);
+            RunStatus = $"Snoozed {SelectedQueueItem.ShowName} until {ToLocalDate(normalizedSnoozeUtc):yyyy-MM-dd}.";
             await RefreshQueueAsync();
             await RefreshHistoryAsync();
         }
@@ -481,7 +526,36 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private bool CanSnooze()
     {
-        return SelectedQueueItem is not null && SnoozeUntilUtc is not null && !IsBusy;
+        return SelectedQueueItem is not null && SnoozeUntilUtc is not null && IsSnoozeDateValid(SnoozeUntilUtc.Value) && !IsBusy;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanEditSnoozeDate))]
+    private void SetSnoozeTomorrow()
+    {
+        SetSnoozeDateFromNow(1);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanEditSnoozeDate))]
+    private void SetSnoozeIn3Days()
+    {
+        SetSnoozeDateFromNow(3);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanEditSnoozeDate))]
+    private void SetSnoozeIn7Days()
+    {
+        SetSnoozeDateFromNow(7);
+    }
+
+    [RelayCommand(CanExecute = nameof(CanEditSnoozeDate))]
+    private void ClearSnoozeDate()
+    {
+        SnoozeUntilUtc = null;
+    }
+
+    private bool CanEditSnoozeDate()
+    {
+        return SelectedQueueItem is not null && !IsBusy;
     }
 
     [RelayCommand]
@@ -641,6 +715,36 @@ public partial class MainWindowViewModel : ViewModelBase
     private static bool TryParseTop(string rawTop, out int top)
     {
         return int.TryParse(rawTop?.Trim(), out top) && top > 0;
+    }
+
+    private void SetSnoozeDateFromNow(int daysFromToday)
+    {
+        var targetDate = GetTodayLocal().AddDays(daysFromToday);
+        var offset = TimeZoneInfo.Local.GetUtcOffset(targetDate);
+        SnoozeUntilUtc = new DateTimeOffset(targetDate, offset).ToUniversalTime();
+    }
+
+    private bool IsSnoozeDateValid(DateTimeOffset value)
+    {
+        var selectedDate = ToLocalDate(value);
+        return selectedDate > GetTodayLocal();
+    }
+
+    private static DateTime ToLocalDate(DateTimeOffset value)
+    {
+        return TimeZoneInfo.ConvertTime(value, TimeZoneInfo.Local).Date;
+    }
+
+    private DateTime GetTodayLocal()
+    {
+        return TimeZoneInfo.ConvertTime(_timeProvider.GetUtcNow(), TimeZoneInfo.Local).Date;
+    }
+
+    private DateTimeOffset NormalizeSnoozeDateToUtc(DateTimeOffset value)
+    {
+        var localDate = ToLocalDate(value);
+        var localOffset = TimeZoneInfo.Local.GetUtcOffset(localDate);
+        return new DateTimeOffset(localDate, localOffset).ToUniversalTime();
     }
 
     private void RefreshCommandPreview()

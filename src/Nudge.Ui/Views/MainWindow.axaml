@@ -132,18 +132,16 @@
                     <StackPanel Spacing="8">
                         <Grid ColumnDefinitions="Auto,*" ColumnSpacing="8">
                             <Button Content="Refresh Queue" Command="{Binding RefreshQueueCommand}" />
-                            <TextBlock Grid.Column="1" VerticalAlignment="Center" Text="{Binding ContactableCount, StringFormat='Contactable targets: {0}'}" />
                         </Grid>
                         <Border Background="#F9FAFB" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="8" Padding="8">
                             <ListBox ItemsSource="{Binding QueueItems}" SelectedItem="{Binding SelectedQueueItem}">
                                 <ListBox.ItemTemplate>
                                     <DataTemplate>
                                         <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
-                                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto,Auto" RowSpacing="2" ColumnSpacing="8">
+                                            <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" RowSpacing="2" ColumnSpacing="8">
                                                 <TextBlock Text="{Binding ShowName}" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap" />
                                                 <TextBlock Grid.Column="1" Foreground="#111827" FontWeight="SemiBold" Text="{Binding Score, StringFormat='Score {0:F3}'}" />
-                                                <TextBlock Grid.Row="1" Foreground="#4B5563" Text="{Binding EffectiveContactEmail, StringFormat='Contact: {0}'}" TextTrimming="CharacterEllipsis" />
-                                                <TextBlock Grid.Row="2" Foreground="#4B5563" Text="{Binding State, StringFormat='State: {0}'}" />
+                                                <TextBlock Grid.Row="1" Foreground="#4B5563" Text="{Binding State, StringFormat='State: {0}'}" />
                                             </Grid>
                                         </Border>
                                     </DataTemplate>
@@ -159,7 +157,7 @@
                                 <TextBlock Text="Selected Target" FontSize="16" FontWeight="SemiBold"/>
                                 <TextBlock Text="{Binding SelectedItemSummary}" TextWrapping="Wrap"/>
                                 <StackPanel Spacing="8" IsEnabled="{Binding HasQueueSelection}">
-                                    <TextBlock Text="Manual Contact Email" />
+                                    <TextBlock Text="Contact" />
                                     <TextBox Text="{Binding ManualContactEmail}" Watermark="email@example.com" />
 
                                     <TextBlock Text="Note" />
@@ -167,6 +165,13 @@
 
                                     <TextBlock Text="Snooze Until (date)" />
                                     <DatePicker SelectedDate="{Binding SnoozeUntilUtc}" />
+                                    <WrapPanel Orientation="Horizontal" ItemHeight="32" ItemWidth="120">
+                                        <Button Content="+1 day" Command="{Binding SetSnoozeTomorrowCommand}" />
+                                        <Button Content="+3 days" Command="{Binding SetSnoozeIn3DaysCommand}" />
+                                        <Button Content="+7 days" Command="{Binding SetSnoozeIn7DaysCommand}" />
+                                        <Button Content="Clear date" Command="{Binding ClearSnoozeDateCommand}" />
+                                    </WrapPanel>
+                                    <TextBlock Text="{Binding SnoozeHelperText}" Foreground="#6B7280" TextWrapping="Wrap" />
 
                                     <WrapPanel Orientation="Horizontal" ItemHeight="34" ItemWidth="160">
                                         <Button Content="Save Note" Command="{Binding SaveAnnotationCommand}" />
