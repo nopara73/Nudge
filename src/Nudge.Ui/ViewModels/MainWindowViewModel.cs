@@ -22,20 +22,17 @@ public partial class MainWindowViewModel : ViewModelBase
         "vo2 max aging"
     ];
 
-    private readonly RunConfigParser _runConfigParser;
     private readonly CliRunnerService _cliRunner;
     private readonly OutreachRepository _repository;
     private readonly SessionStateStore _sessionStateStore;
     private readonly TimeProvider _timeProvider;
 
     public MainWindowViewModel(
-        RunConfigParser runConfigParser,
         CliRunnerService cliRunner,
         OutreachRepository repository,
         SessionStateStore sessionStateStore,
         TimeProvider timeProvider)
     {
-        _runConfigParser = runConfigParser;
         _cliRunner = cliRunner;
         _repository = repository;
         _sessionStateStore = sessionStateStore;
@@ -46,9 +43,9 @@ public partial class MainWindowViewModel : ViewModelBase
         FilteredHistoryItems = [];
 
         var session = _sessionStateStore.Load();
-        ConfigPath = ResolveInitialConfigPath(session.LastConfigPath);
         CurrentViewIndex = ParseViewIndex(session.LastView);
-        RunStatus = "Config defaults to nudge.local.json. Run when ready.";
+        RunStatus = "Using nudge.local.json. Run when ready.";
+        CommandPreview = _cliRunner.BuildCommandPreview(BuildRunProfile());
     }
 
     public ObservableCollection<QueueItem> QueueItems { get; }
@@ -57,9 +54,6 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private int currentViewIndex;
-
-    [ObservableProperty]
-    private string configPath = string.Empty;
 
     [ObservableProperty]
     private string runStatus = string.Empty;
@@ -109,12 +103,10 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    partial void OnCurrentViewIndexChanged(int value)
-    {
-        PersistSession();
-    }
+    public IReadOnlyList<string> SelectedRecentEpisodeTitles =>
+        SelectedQueueItem?.RecentEpisodeTitles ?? Array.Empty<string>();
 
-    partial void OnConfigPathChanged(string value)
+    partial void OnCurrentViewIndexChanged(int value)
     {
         PersistSession();
     }
@@ -127,6 +119,7 @@ public partial class MainWindowViewModel : ViewModelBase
             QueueNote = string.Empty;
             ManualContactEmail = string.Empty;
             OnPropertyChanged(nameof(SelectedItemSummary));
+            OnPropertyChanged(nameof(SelectedRecentEpisodeTitles));
             return;
         }
 
@@ -134,6 +127,7 @@ public partial class MainWindowViewModel : ViewModelBase
         QueueNote = value.Note;
         ManualContactEmail = value.ManualContactEmail ?? value.ContactEmail ?? string.Empty;
         OnPropertyChanged(nameof(SelectedItemSummary));
+        OnPropertyChanged(nameof(SelectedRecentEpisodeTitles));
         _ = RefreshHistoryAsync(value.IdentityKey);
     }
 
@@ -142,20 +136,9 @@ public partial class MainWindowViewModel : ViewModelBase
         ApplyHistoryFilter();
     }
 
-    public void SetConfigPathFromUi(string configPath)
-    {
-        ConfigPath = configPath;
-    }
-
     [RelayCommand]
     private async Task RunFromConfigAsync()
     {
-        if (string.IsNullOrWhiteSpace(ConfigPath))
-        {
-            RunStatus = "Select a config JSON file first.";
-            return;
-        }
-
         IsBusy = true;
         try
         {
@@ -370,59 +353,17 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         _sessionStateStore.Save(new SessionState
         {
-            LastView = CurrentViewIndex.ToString(),
-            LastConfigPath = ConfigPath
+            LastView = CurrentViewIndex.ToString()
         });
-    }
-
-    private static string ResolveInitialConfigPath(string persistedPath)
-    {
-        if (!string.IsNullOrWhiteSpace(persistedPath) && File.Exists(persistedPath))
-        {
-            return persistedPath;
-        }
-
-        try
-        {
-            var repoRoot = RepositoryPaths.LocateRepositoryRoot();
-            var nudgeLocalPath = Path.Combine(repoRoot, "nudge.local.json");
-            if (File.Exists(nudgeLocalPath))
-            {
-                return nudgeLocalPath;
-            }
-
-            var outputPath = Path.Combine(repoRoot, "output.json");
-            if (File.Exists(outputPath))
-            {
-                return outputPath;
-            }
-        }
-        catch
-        {
-            // Ignore repo discovery issues and return empty path.
-        }
-
-        return string.Empty;
     }
 
     private RunConfigProfile BuildRunProfile()
     {
-        if (string.IsNullOrWhiteSpace(ConfigPath))
-        {
-            throw new InvalidOperationException("Select a config JSON file first.");
-        }
-
-        var fileName = Path.GetFileName(ConfigPath);
-        if (fileName.Equals("nudge.local.json", StringComparison.OrdinalIgnoreCase))
-        {
-            return new RunConfigProfile(
-                DefaultRunKeywords,
-                60,
-                30,
-                false,
-                false);
-        }
-
-        return _runConfigParser.Parse(ConfigPath);
+        return new RunConfigProfile(
+            DefaultRunKeywords,
+            60,
+            30,
+            false,
+            false);
     }
 }

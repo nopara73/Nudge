@@ -55,7 +55,6 @@ public partial class App : Application
     {
         var services = new ServiceCollection();
         services.AddSingleton<TimeProvider>(TimeProvider.System);
-        services.AddSingleton<RunConfigParser>();
         services.AddSingleton<CliRunnerService>();
         services.AddSingleton<OutreachRepository>();
         services.AddSingleton<SessionStateStore>();

@@ -6,7 +6,48 @@ namespace Nudge.Ui.Services;
 
 public sealed class CliRunnerService
 {
+    public string BuildCommandPreview(RunConfigProfile profile)
+    {
+        var startInfo = BuildStartInfo(profile);
+        return BuildCommandPreview(startInfo);
+    }
+
     public async Task<CliRunResult> RunAsync(RunConfigProfile profile, CancellationToken cancellationToken = default)
+    {
+        var startInfo = BuildStartInfo(profile);
+
+        using var process = new Process { StartInfo = startInfo };
+        process.Start();
+
+        var stdOutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stdErrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        await process.WaitForExitAsync(cancellationToken);
+
+        var stdOut = await stdOutTask;
+        var stdErr = await stdErrTask;
+
+        if (process.ExitCode != 0)
+        {
+            return CliRunResult.Fail(
+                $"CLI exited with code {process.ExitCode}.",
+                BuildCommandPreview(startInfo),
+                stdOut,
+                stdErr);
+        }
+
+        if (!TryExtractEnvelope(stdOut, out var envelope, out var parseError))
+        {
+            return CliRunResult.Fail(
+                $"CLI succeeded but JSON output could not be parsed: {parseError}",
+                BuildCommandPreview(startInfo),
+                stdOut,
+                stdErr);
+        }
+
+        return CliRunResult.Ok(envelope!, BuildCommandPreview(startInfo), stdOut, stdErr);
+    }
+
+    private static ProcessStartInfo BuildStartInfo(RunConfigProfile profile)
     {
         var repoRoot = RepositoryPaths.LocateRepositoryRoot();
         var startInfo = new ProcessStartInfo
@@ -41,35 +82,7 @@ public sealed class CliRunnerService
             startInfo.ArgumentList.Add("--verbose");
         }
 
-        using var process = new Process { StartInfo = startInfo };
-        process.Start();
-
-        var stdOutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
-        var stdErrTask = process.StandardError.ReadToEndAsync(cancellationToken);
-        await process.WaitForExitAsync(cancellationToken);
-
-        var stdOut = await stdOutTask;
-        var stdErr = await stdErrTask;
-
-        if (process.ExitCode != 0)
-        {
-            return CliRunResult.Fail(
-                $"CLI exited with code {process.ExitCode}.",
-                BuildCommandPreview(startInfo),
-                stdOut,
-                stdErr);
-        }
-
-        if (!TryExtractEnvelope(stdOut, out var envelope, out var parseError))
-        {
-            return CliRunResult.Fail(
-                $"CLI succeeded but JSON output could not be parsed: {parseError}",
-                BuildCommandPreview(startInfo),
-                stdOut,
-                stdErr);
-        }
-
-        return CliRunResult.Ok(envelope!, BuildCommandPreview(startInfo), stdOut, stdErr);
+        return startInfo;
     }
 
     private static string BuildCommandPreview(ProcessStartInfo info)

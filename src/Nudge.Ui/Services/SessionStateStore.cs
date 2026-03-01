@@ -43,5 +43,4 @@ public sealed class SessionStateStore
 public sealed class SessionState
 {
     public string LastView { get; init; } = "Run";
-    public string LastConfigPath { get; init; } = string.Empty;
 }

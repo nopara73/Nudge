@@ -21,12 +21,8 @@
             <TabItem Header="Run">
                 <ScrollViewer>
                     <StackPanel Spacing="10" Margin="8">
-                        <TextBlock Text="Run Configuration (import from JSON)" FontWeight="SemiBold" />
-                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                            <TextBox Grid.Column="0" Text="{Binding ConfigPath}" Watermark="Path to run config JSON" />
-                            <Button Grid.Column="1" Content="Browse..." Click="OnBrowseConfigClicked" />
-                            <Button Grid.Column="2" Content="Run CLI + Ingest" Command="{Binding RunFromConfigCommand}" />
-                        </Grid>
+                        <TextBlock Text="Run Configuration" FontWeight="SemiBold" />
+                        <Button Content="Run CLI + Ingest" Command="{Binding RunFromConfigCommand}" HorizontalAlignment="Left" />
 
                         <TextBlock Text="Command Preview" FontWeight="SemiBold"/>
                         <TextBox IsReadOnly="True" Text="{Binding CommandPreview}" TextWrapping="Wrap" MinHeight="50" />
@@ -86,7 +82,7 @@
                             </WrapPanel>
 
                             <TextBlock Text="Recent Episode Titles" FontWeight="SemiBold"/>
-                            <ItemsControl ItemsSource="{Binding SelectedQueueItem.RecentEpisodeTitles}">
+                            <ItemsControl ItemsSource="{Binding SelectedRecentEpisodeTitles}">
                                 <ItemsControl.ItemTemplate>
                                     <DataTemplate>
                                         <TextBlock Text="{Binding .}" TextWrapping="Wrap" Margin="0,0,0,4"/>
