@@ -4,5 +4,6 @@ public sealed record Episode(
     string Title,
     string Description,
     DateTimeOffset? PublishedAtUtc,
-    string? RawPublishedDate = null
+    string? RawPublishedDate = null,
+    string? Url = null
 );

@@ -119,8 +119,8 @@ public sealed class OutreachRepository
                 continue;
             }
 
-            var recentTitlesJson = reader.GetString(reader.GetOrdinal("RecentEpisodeTitlesJson"));
-            var recentTitles = JsonSerializer.Deserialize<List<string>>(recentTitlesJson) ?? [];
+            var recentEpisodesJson = reader.GetString(reader.GetOrdinal("RecentEpisodeTitlesJson"));
+            var recentEpisodes = ParseRecentEpisodesJson(recentEpisodesJson);
 
             var contactEmail = ReadNullableString(reader, "ContactEmail");
             var manualContactEmail = ReadNullableString(reader, "ManualContactEmail");
@@ -145,7 +145,7 @@ public sealed class OutreachRepository
                 ActivityScore = reader.GetDouble(reader.GetOrdinal("ActivityScore")),
                 OutreachPriority = reader.GetString(reader.GetOrdinal("OutreachPriority")),
                 NewestEpisodePublishedAtUtc = ReadDateTimeOffset(reader, "NewestEpisodePublishedAtUtc"),
-                RecentEpisodeTitles = recentTitles,
+                RecentEpisodes = recentEpisodes,
                 NicheFitBreakdownJson = reader.GetString(reader.GetOrdinal("NicheFitBreakdownJson")),
                 State = state,
                 CooldownUntilUtc = cooldownUntil,
@@ -429,7 +429,10 @@ public sealed class OutreachRepository
         command.Parameters.AddWithValue("@outreachPriority", item.OutreachPriority);
         command.Parameters.AddWithValue("@score", item.Score);
         command.Parameters.AddWithValue("@newestEpisodePublishedAtUtc", item.NewestEpisodePublishedAtUtc?.ToString("O") ?? (object)DBNull.Value);
-        command.Parameters.AddWithValue("@recentEpisodeTitlesJson", JsonSerializer.Serialize(item.RecentEpisodeTitles));
+        var recentEpisodes = item.RecentEpisodes.Count > 0
+            ? item.RecentEpisodes.Select(e => new StoredEpisode { Title = e.Title, Url = e.Url }).ToArray()
+            : item.RecentEpisodeTitles.Select(title => new StoredEpisode { Title = title }).ToArray();
+        command.Parameters.AddWithValue("@recentEpisodeTitlesJson", JsonSerializer.Serialize(recentEpisodes));
         command.Parameters.AddWithValue("@nicheFitBreakdownJson", JsonSerializer.Serialize(item.NicheFitBreakdown));
 
         await command.ExecuteNonQueryAsync(cancellationToken);
@@ -728,6 +731,87 @@ public sealed class OutreachRepository
     private static string? ToNullIfWhitespace(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static IReadOnlyList<QueueEpisode> ParseRecentEpisodesJson(string rawJson)
+    {
+        if (string.IsNullOrWhiteSpace(rawJson))
+        {
+            return Array.Empty<QueueEpisode>();
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<QueueEpisode>();
+            }
+
+            var episodes = new List<QueueEpisode>();
+            foreach (var element in document.RootElement.EnumerateArray())
+            {
+                switch (element.ValueKind)
+                {
+                    case JsonValueKind.String:
+                    {
+                        var title = element.GetString();
+                        if (!string.IsNullOrWhiteSpace(title))
+                        {
+                            episodes.Add(new QueueEpisode
+                            {
+                                Title = title.Trim()
+                            });
+                        }
+                        break;
+                    }
+                    case JsonValueKind.Object:
+                    {
+                        var title = GetEpisodeProperty(element, "title");
+                        if (string.IsNullOrWhiteSpace(title))
+                        {
+                            break;
+                        }
+
+                        episodes.Add(new QueueEpisode
+                        {
+                            Title = title.Trim(),
+                            Url = GetEpisodeProperty(element, "url")
+                        });
+                        break;
+                    }
+                }
+            }
+
+            return episodes;
+        }
+        catch (JsonException)
+        {
+            return Array.Empty<QueueEpisode>();
+        }
+    }
+
+    private static string? GetEpisodeProperty(JsonElement element, string propertyName)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase) ||
+                property.Value.ValueKind != JsonValueKind.String)
+            {
+                continue;
+            }
+
+            var value = property.Value.GetString();
+            return string.IsNullOrWhiteSpace(value) ? null : value.Trim();
+        }
+
+        return null;
+    }
+
+    private sealed class StoredEpisode
+    {
+        public required string Title { get; init; }
+        public string? Url { get; init; }
     }
 
     private sealed class TargetStateRow

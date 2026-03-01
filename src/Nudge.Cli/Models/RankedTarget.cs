@@ -18,4 +18,11 @@ public sealed record RankedTarget
     public double Score { get; init; }
     public DateTimeOffset? NewestEpisodePublishedAtUtc { get; init; }
     public IReadOnlyList<string> RecentEpisodeTitles { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<RankedEpisode> RecentEpisodes { get; init; } = Array.Empty<RankedEpisode>();
+}
+
+public sealed record RankedEpisode
+{
+    public required string Title { get; init; }
+    public string? Url { get; init; }
 }

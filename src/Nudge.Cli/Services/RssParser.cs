@@ -56,6 +56,7 @@ public sealed partial class RssParser : IRssParser
             var title = item.Element("title")?.Value?.Trim() ?? string.Empty;
             var description = item.Element("description")?.Value?.Trim() ?? string.Empty;
             var rawPubDate = item.Element("pubDate")?.Value?.Trim();
+            var link = item.Element("link")?.Value?.Trim();
 
             DateTimeOffset? publishedAtUtc = null;
             if (!string.IsNullOrWhiteSpace(rawPubDate))
@@ -70,7 +71,7 @@ public sealed partial class RssParser : IRssParser
                 }
             }
 
-            feedOrderEpisodes.Add((new Episode(title, description, publishedAtUtc, rawPubDate), index));
+            feedOrderEpisodes.Add((new Episode(title, description, publishedAtUtc, rawPubDate, link), index));
         }
 
         return feedOrderEpisodes

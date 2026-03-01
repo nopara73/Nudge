@@ -17,7 +17,8 @@ public sealed class QueueItem
     public double ActivityScore { get; init; }
     public string OutreachPriority { get; init; } = "Low";
     public DateTimeOffset? NewestEpisodePublishedAtUtc { get; init; }
-    public IReadOnlyList<string> RecentEpisodeTitles { get; init; } = Array.Empty<string>();
+    public IReadOnlyList<QueueEpisode> RecentEpisodes { get; init; } = Array.Empty<QueueEpisode>();
+    public IReadOnlyList<string> RecentEpisodeTitles => RecentEpisodes.Select(episode => episode.Title).ToArray();
     public string NicheFitBreakdownJson { get; init; } = string.Empty;
     public OutreachState State { get; init; } = OutreachState.New;
     public DateTimeOffset? CooldownUntilUtc { get; init; }

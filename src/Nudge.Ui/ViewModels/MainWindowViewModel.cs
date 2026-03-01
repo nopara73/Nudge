@@ -1,5 +1,7 @@
 using System.Collections.ObjectModel;
+using System.Diagnostics;
 using System.Linq;
+using System.Text.Json;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Nudge.Ui.Models;
@@ -53,6 +55,7 @@ public partial class MainWindowViewModel : ViewModelBase
         QueueItems = [];
         HistoryItems = [];
         FilteredHistoryItems = [];
+        SelectedNicheFitHighlights = [];
         SnoozePresetOptions = DefaultSnoozePresets;
         SelectedSnoozePreset = SnoozePresetOptions.FirstOrDefault();
 
@@ -75,6 +78,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public ObservableCollection<QueueItem> QueueItems { get; }
     public ObservableCollection<HistoryEvent> HistoryItems { get; }
     public ObservableCollection<HistoryEvent> FilteredHistoryItems { get; }
+    public ObservableCollection<string> SelectedNicheFitHighlights { get; }
     public IReadOnlyList<SnoozePresetOption> SnoozePresetOptions { get; }
 
     [ObservableProperty]
@@ -112,6 +116,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(StartFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(ConfirmFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelFullResetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenFeedUrlCommand))]
     private bool isBusy;
 
     [ObservableProperty]
@@ -120,6 +125,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedNoCommand))]
     [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveAnnotationCommand))]
+    [NotifyCanExecuteChangedFor(nameof(OpenFeedUrlCommand))]
     private QueueItem? selectedQueueItem;
 
     [ObservableProperty]
@@ -169,8 +175,25 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
-    public IReadOnlyList<string> SelectedRecentEpisodeTitles =>
-        SelectedQueueItem?.RecentEpisodeTitles ?? Array.Empty<string>();
+    public IReadOnlyList<QueueEpisode> SelectedRecentEpisodes =>
+        SelectedQueueItem?.RecentEpisodes ?? Array.Empty<QueueEpisode>();
+
+    public string SelectedFeedUrl =>
+        string.IsNullOrWhiteSpace(SelectedQueueItem?.FeedUrl) ? "-" : SelectedQueueItem!.FeedUrl;
+
+    public string SelectedLanguageDisplay =>
+        string.IsNullOrWhiteSpace(SelectedQueueItem?.DetectedLanguage) ? "-" : SelectedQueueItem!.DetectedLanguage;
+
+    public string SelectedPriorityDisplay =>
+        string.IsNullOrWhiteSpace(SelectedQueueItem?.OutreachPriority) ? "-" : SelectedQueueItem!.OutreachPriority;
+
+    public string SelectedScoreDisplay =>
+        SelectedQueueItem is null ? "-" : SelectedQueueItem.Score.ToString("F3");
+
+    public string SelectedReachDisplay => FormatAsPercent(SelectedQueueItem?.Reach);
+    public string SelectedFrequencyDisplay => FormatAsPercent(SelectedQueueItem?.Frequency);
+    public string SelectedNicheFitDisplay => FormatAsPercent(SelectedQueueItem?.NicheFit);
+    public string SelectedActivityDisplay => FormatAsPercent(SelectedQueueItem?.ActivityScore);
 
     public bool HasQueueSelection => SelectedQueueItem is not null;
 
@@ -185,8 +208,13 @@ public partial class MainWindowViewModel : ViewModelBase
             : string.Empty;
 
     public string SelectedEpisodesEmptyMessage =>
-        SelectedRecentEpisodeTitles.Count == 0
+        SelectedRecentEpisodes.Count == 0
             ? "No recent episode titles are available for this target."
+            : string.Empty;
+
+    public string SelectedNicheFitHighlightsEmptyMessage =>
+        SelectedNicheFitHighlights.Count == 0
+            ? "No token-level niche-fit details are available for this target."
             : string.Empty;
 
     public string SnoozeHelperText
@@ -239,11 +267,7 @@ public partial class MainWindowViewModel : ViewModelBase
             QueueNote = string.Empty;
             ManualContactEmail = string.Empty;
             SnoozeUntilUtc = null;
-            OnPropertyChanged(nameof(HasQueueSelection));
-            OnPropertyChanged(nameof(SelectedItemSummary));
-            OnPropertyChanged(nameof(SelectedRecentEpisodeTitles));
-            OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
-            OnPropertyChanged(nameof(SnoozeHelperText));
+            RefreshSelectedTargetComputedState();
             return;
         }
 
@@ -255,12 +279,7 @@ public partial class MainWindowViewModel : ViewModelBase
         {
             SnoozeUntilUtc = BuildSnoozeDateFromPreset(SelectedSnoozePreset);
         }
-        OnPropertyChanged(nameof(HasQueueSelection));
-        OnPropertyChanged(nameof(SelectedItemSummary));
-        OnPropertyChanged(nameof(SelectedRecentEpisodeTitles));
-        OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
-        OnPropertyChanged(nameof(SnoozeHelperText));
-        OnPropertyChanged(nameof(SnoozeUntilDisplay));
+        RefreshSelectedTargetComputedState();
         _ = RefreshHistoryAsync(value.IdentityKey);
     }
 
@@ -594,6 +613,73 @@ public partial class MainWindowViewModel : ViewModelBase
         return SelectedQueueItem is not null && !IsBusy;
     }
 
+    [RelayCommand(CanExecute = nameof(CanOpenFeedUrl))]
+    private void OpenFeedUrl()
+    {
+        if (string.IsNullOrWhiteSpace(SelectedQueueItem?.FeedUrl))
+        {
+            RunStatus = "Feed URL is unavailable for this item.";
+            return;
+        }
+
+        if (!Uri.TryCreate(SelectedQueueItem.FeedUrl, UriKind.Absolute, out var uri))
+        {
+            RunStatus = $"Feed URL is invalid: {SelectedQueueItem.FeedUrl}";
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = uri.ToString(),
+                UseShellExecute = true
+            });
+            RunStatus = $"Opened feed URL for '{SelectedQueueItem.ShowName}'.";
+        }
+        catch (Exception ex)
+        {
+            RunStatus = $"Unable to open feed URL: {ex.Message}";
+        }
+    }
+
+    private bool CanOpenFeedUrl()
+    {
+        return !IsBusy &&
+               SelectedQueueItem is not null &&
+               !string.IsNullOrWhiteSpace(SelectedQueueItem.FeedUrl);
+    }
+
+    [RelayCommand]
+    private void OpenEpisode(QueueEpisode? episode)
+    {
+        if (episode is null || string.IsNullOrWhiteSpace(episode.Url))
+        {
+            RunStatus = "Episode link is unavailable for this item.";
+            return;
+        }
+
+        if (!Uri.TryCreate(episode.Url, UriKind.Absolute, out var uri))
+        {
+            RunStatus = $"Episode URL is invalid: {episode.Url}";
+            return;
+        }
+
+        try
+        {
+            Process.Start(new ProcessStartInfo
+            {
+                FileName = uri.ToString(),
+                UseShellExecute = true
+            });
+            RunStatus = $"Opened episode link for '{episode.Title}'.";
+        }
+        catch (Exception ex)
+        {
+            RunStatus = $"Unable to open episode link: {ex.Message}";
+        }
+    }
+
     [RelayCommand]
     private async Task RefreshHistoryAsync(string? identityKey = null)
     {
@@ -724,6 +810,97 @@ public partial class MainWindowViewModel : ViewModelBase
     private static bool TryParseTop(string rawTop, out int top)
     {
         return int.TryParse(rawTop?.Trim(), out top) && top > 0;
+    }
+
+    private void RefreshSelectedTargetComputedState()
+    {
+        PopulateSelectedNicheFitHighlights();
+
+        OnPropertyChanged(nameof(HasQueueSelection));
+        OnPropertyChanged(nameof(SelectedItemSummary));
+        OnPropertyChanged(nameof(SelectedRecentEpisodes));
+        OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
+        OnPropertyChanged(nameof(SelectedNicheFitHighlightsEmptyMessage));
+        OnPropertyChanged(nameof(SelectedFeedUrl));
+        OnPropertyChanged(nameof(SelectedLanguageDisplay));
+        OnPropertyChanged(nameof(SelectedPriorityDisplay));
+        OnPropertyChanged(nameof(SelectedScoreDisplay));
+        OnPropertyChanged(nameof(SelectedReachDisplay));
+        OnPropertyChanged(nameof(SelectedFrequencyDisplay));
+        OnPropertyChanged(nameof(SelectedNicheFitDisplay));
+        OnPropertyChanged(nameof(SelectedActivityDisplay));
+        OnPropertyChanged(nameof(SnoozeHelperText));
+        OnPropertyChanged(nameof(SnoozeUntilDisplay));
+    }
+
+    private void PopulateSelectedNicheFitHighlights()
+    {
+        SelectedNicheFitHighlights.Clear();
+        var rawJson = SelectedQueueItem?.NicheFitBreakdownJson;
+        if (string.IsNullOrWhiteSpace(rawJson))
+        {
+            return;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawJson);
+            var root = document.RootElement;
+            if (root.ValueKind != JsonValueKind.Object)
+            {
+                return;
+            }
+
+            if (root.TryGetProperty("tokenHits", out var tokenHits) && tokenHits.ValueKind == JsonValueKind.Array)
+            {
+                foreach (var tokenHit in tokenHits.EnumerateArray().Take(8))
+                {
+                    if (!tokenHit.TryGetProperty("token", out var tokenNode) || tokenNode.ValueKind != JsonValueKind.String)
+                    {
+                        continue;
+                    }
+
+                    var token = tokenNode.GetString() ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(token))
+                    {
+                        continue;
+                    }
+
+                    var hits = tokenHit.TryGetProperty("hits", out var hitsNode) && hitsNode.TryGetInt32(out var parsedHits)
+                        ? parsedHits
+                        : 0;
+                    var weight = tokenHit.TryGetProperty("weight", out var weightNode) && weightNode.TryGetInt32(out var parsedWeight)
+                        ? parsedWeight
+                        : 0;
+                    var contribution = tokenHit.TryGetProperty("contribution", out var contributionNode) && contributionNode.TryGetInt32(out var parsedContribution)
+                        ? parsedContribution
+                        : 0;
+
+                    SelectedNicheFitHighlights.Add(
+                        $"{token}: {hits} hit(s), weight {weight}, contribution {contribution}");
+                }
+            }
+
+            if (root.TryGetProperty("businessContextDetected", out var businessContextNode) &&
+                businessContextNode.ValueKind == JsonValueKind.True)
+            {
+                SelectedNicheFitHighlights.Add("Business-context signal detected in show text.");
+            }
+        }
+        catch (JsonException)
+        {
+            SelectedNicheFitHighlights.Add("Could not parse token-level niche-fit details.");
+        }
+    }
+
+    private static string FormatAsPercent(double? value)
+    {
+        if (!value.HasValue)
+        {
+            return "-";
+        }
+
+        return $"{Math.Clamp(value.Value, 0.0, 1.0) * 100:F1}%";
     }
 
     private DateTimeOffset BuildSnoozeDateFromPreset(SnoozePresetOption preset)

@@ -76,6 +76,18 @@ public sealed class CliOutputResultItem
     [JsonPropertyName("recentEpisodeTitles")]
     public List<string> RecentEpisodeTitles { get; init; } = [];
 
+    [JsonPropertyName("recentEpisodes")]
+    public List<CliOutputEpisode> RecentEpisodes { get; init; } = [];
+
     [JsonPropertyName("nicheFitBreakdown")]
     public object? NicheFitBreakdown { get; init; }
+}
+
+public sealed class CliOutputEpisode
+{
+    [JsonPropertyName("title")]
+    public string Title { get; init; } = string.Empty;
+
+    [JsonPropertyName("url")]
+    public string? Url { get; init; }
 }

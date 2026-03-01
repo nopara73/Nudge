@@ -20,6 +20,7 @@ public sealed class RssParserTests
                   <title>Episode 1</title>
                   <description>Desc</description>
                   <pubDate>Fri, 20 Feb 2026 10:00:00 GMT</pubDate>
+                  <link>https://example.com/episodes/1</link>
                 </item>
               </channel>
             </rss>
@@ -32,6 +33,7 @@ public sealed class RssParserTests
         Assert.NotNull(result.Payload);
         Assert.Equal("owner@example.com", result.Payload!.PodcastEmail);
         Assert.Equal("en-us", result.Payload.PodcastLanguage);
+        Assert.Equal("https://example.com/episodes/1", result.Payload.Episodes[0].Url);
     }
 
     [Fact]
