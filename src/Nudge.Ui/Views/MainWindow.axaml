@@ -32,9 +32,14 @@
                             <StackPanel Spacing="10">
                                 <TextBlock Text="Run Configuration" FontWeight="SemiBold" FontSize="16" />
 
-                                <Grid ColumnDefinitions="*,Auto" ColumnSpacing="8">
+                                <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
                                     <TextBlock Text="Keywords (comma-separated)" FontWeight="SemiBold" VerticalAlignment="Center" />
-                                    <Button Grid.Column="1" Content="Reset Defaults" Command="{Binding ResetRunConfigCommand}" />
+                                    <Button Grid.Column="1" Content="Reset Run Settings" Command="{Binding ResetRunConfigCommand}" />
+                                    <Button Grid.Column="2"
+                                            Content="Full Reset"
+                                            Background="#991B1B"
+                                            Foreground="White"
+                                            Command="{Binding StartFullResetCommand}" />
                                 </Grid>
                                 <TextBox Text="{Binding RunKeywords}"
                                          Watermark="masters athlete, over 40 fitness, longevity performance"
@@ -44,6 +49,26 @@
                                 <TextBlock Text="Use specific phrases to improve podcast relevance."
                                            TextWrapping="Wrap"
                                            Foreground="#6B7280" />
+                                <Border IsVisible="{Binding IsFullResetConfirmVisible}"
+                                        Background="#FEF2F2"
+                                        BorderBrush="#FECACA"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="10">
+                                    <StackPanel Spacing="8">
+                                        <TextBlock Text="Full reset clears all runs, queue state, and history. This cannot be undone."
+                                                   TextWrapping="Wrap"
+                                                   Foreground="#991B1B"
+                                                   FontWeight="SemiBold" />
+                                        <WrapPanel Orientation="Horizontal" ItemHeight="34" ItemWidth="170">
+                                            <Button Content="Confirm Full Reset"
+                                                    Command="{Binding ConfirmFullResetCommand}"
+                                                    Background="#991B1B"
+                                                    Foreground="White" />
+                                            <Button Content="Cancel" Command="{Binding CancelFullResetCommand}" />
+                                        </WrapPanel>
+                                    </StackPanel>
+                                </Border>
 
                                 <TextBlock Text="Published After Days" FontWeight="SemiBold" />
                                 <TextBox Text="{Binding PublishedAfterDays}" Width="180" Watermark="60" HorizontalAlignment="Left" />
@@ -137,9 +162,6 @@
                                     <TextBlock Text="Manual Contact Email" />
                                     <TextBox Text="{Binding ManualContactEmail}" Watermark="email@example.com" />
 
-                                    <TextBlock Text="Tags (comma-separated)" />
-                                    <TextBox Text="{Binding QueueTags}" />
-
                                     <TextBlock Text="Note" />
                                     <TextBox Text="{Binding QueueNote}" AcceptsReturn="True" MinHeight="70" TextWrapping="Wrap" />
 
@@ -147,7 +169,7 @@
                                     <DatePicker SelectedDate="{Binding SnoozeUntilUtc}" />
 
                                     <WrapPanel Orientation="Horizontal" ItemHeight="34" ItemWidth="160">
-                                        <Button Content="Save Tags/Note" Command="{Binding SaveAnnotationCommand}" />
+                                        <Button Content="Save Note" Command="{Binding SaveAnnotationCommand}" />
                                         <Button Content="Mark Contacted" Command="{Binding MarkContactedCommand}" />
                                         <Button Content="Mark Replied YES" Command="{Binding MarkRepliedYesCommand}" Background="#166534" Foreground="White" />
                                         <Button Content="Mark Replied NO" Command="{Binding MarkRepliedNoCommand}" Background="#991B1B" Foreground="White" />

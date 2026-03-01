@@ -38,6 +38,16 @@ public sealed class SessionStateStore
         var json = JsonSerializer.Serialize(state, new JsonSerializerOptions { WriteIndented = true });
         File.WriteAllText(_filePath, json);
     }
+
+    public void Clear()
+    {
+        if (!File.Exists(_filePath))
+        {
+            return;
+        }
+
+        File.Delete(_filePath);
+    }
 }
 
 public sealed class SessionState

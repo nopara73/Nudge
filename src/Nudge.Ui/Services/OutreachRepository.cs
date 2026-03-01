@@ -43,6 +43,25 @@ public sealed class OutreachRepository
         return runId;
     }
 
+    public async Task ClearAllDataAsync(CancellationToken cancellationToken = default)
+    {
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+
+        await using var command = connection.CreateCommand();
+        command.Transaction = transaction;
+        command.CommandText = """
+            DELETE FROM TargetStateEvents;
+            DELETE FROM TargetStates;
+            DELETE FROM RunTargets;
+            DELETE FROM Runs;
+            """;
+        await command.ExecuteNonQueryAsync(cancellationToken);
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
     public async Task<IReadOnlyList<QueueItem>> GetContactableQueueAsync(CancellationToken cancellationToken = default)
     {
         const string sql = """

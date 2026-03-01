@@ -97,6 +97,9 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(MarkRepliedNoCommand))]
     [NotifyCanExecuteChangedFor(nameof(SnoozeCommand))]
     [NotifyCanExecuteChangedFor(nameof(SaveAnnotationCommand))]
+    [NotifyCanExecuteChangedFor(nameof(StartFullResetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ConfirmFullResetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelFullResetCommand))]
     private bool isBusy;
 
     [ObservableProperty]
@@ -125,6 +128,12 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string runConfigMessage = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(StartFullResetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(ConfirmFullResetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(CancelFullResetCommand))]
+    private bool isFullResetConfirmVisible;
 
     public int ContactableCount => QueueItems.Count;
 
@@ -279,6 +288,69 @@ public partial class MainWindowViewModel : ViewModelBase
         RunStatus = "Run settings reset to defaults.";
     }
 
+    [RelayCommand(CanExecute = nameof(CanStartFullReset))]
+    private void StartFullReset()
+    {
+        IsFullResetConfirmVisible = true;
+        RunStatus = "Warning: full reset will clear all queue/history/state data.";
+    }
+
+    private bool CanStartFullReset()
+    {
+        return !IsBusy && !IsFullResetConfirmVisible;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanConfirmOrCancelFullReset))]
+    private void CancelFullReset()
+    {
+        IsFullResetConfirmVisible = false;
+        RunStatus = "Full reset canceled.";
+    }
+
+    [RelayCommand(CanExecute = nameof(CanConfirmOrCancelFullReset))]
+    private async Task ConfirmFullResetAsync()
+    {
+        IsBusy = true;
+        try
+        {
+            await _repository.ClearAllDataAsync();
+            _sessionStateStore.Clear();
+
+            QueueItems.Clear();
+            SelectedQueueItem = null;
+            OnPropertyChanged(nameof(ContactableCount));
+            OnPropertyChanged(nameof(QueueEmptyMessage));
+
+            HistoryItems.Clear();
+            FilteredHistoryItems.Clear();
+            OnPropertyChanged(nameof(HistoryEmptyMessage));
+
+            HistoryFilterText = string.Empty;
+            WarningsText = string.Empty;
+            IsFullResetConfirmVisible = false;
+
+            RunKeywords = string.Join(", ", DefaultRunKeywords);
+            PublishedAfterDays = DefaultPublishedAfterDays.ToString();
+            RunTop = DefaultTop.ToString();
+            CurrentViewIndex = 0;
+
+            RunStatus = "Full reset complete. All saved run and outreach data was cleared.";
+        }
+        catch (Exception ex)
+        {
+            RunStatus = $"Full reset failed: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanConfirmOrCancelFullReset()
+    {
+        return !IsBusy && IsFullResetConfirmVisible;
+    }
+
     [RelayCommand]
     private async Task RefreshQueueAsync()
     {
@@ -424,7 +496,7 @@ public partial class MainWindowViewModel : ViewModelBase
         try
         {
             await _repository.SaveAnnotationAsync(SelectedQueueItem, QueueTags, QueueNote, ManualContactEmail);
-            RunStatus = $"Saved tags/note for {SelectedQueueItem.ShowName}.";
+            RunStatus = $"Saved note for {SelectedQueueItem.ShowName}.";
             await RefreshQueueAsync();
             await RefreshHistoryAsync(SelectedQueueItem.IdentityKey);
         }
