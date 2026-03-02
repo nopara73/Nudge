@@ -26,4 +26,41 @@ public sealed class QueueItem
     public DateTimeOffset? ContactedAtUtc { get; init; }
     public string Tags { get; init; } = string.Empty;
     public string Note { get; init; } = string.Empty;
+
+    public string StateDisplayLabel => State switch
+    {
+        OutreachState.New => "New",
+        OutreachState.ContactedWaiting => "Contacted",
+        OutreachState.Snoozed => "Snoozed",
+        OutreachState.RepliedYes => "Replied YES",
+        OutreachState.RepliedNo => "Replied NO",
+        OutreachState.Dismissed => "Dismissed",
+        OutreachState.InterviewDone => "Interview done",
+        _ => State.ToString()
+    };
+
+    public string WaitingUntilDisplay
+    {
+        get
+        {
+            if (State == OutreachState.Snoozed && SnoozeUntilUtc is not null)
+            {
+                return $"Snoozed until {SnoozeUntilUtc.Value.ToLocalTime():yyyy-MM-dd}";
+            }
+
+            if (State == OutreachState.ContactedWaiting && CooldownUntilUtc is not null)
+            {
+                return $"Cooldown until {CooldownUntilUtc.Value.ToLocalTime():yyyy-MM-dd}";
+            }
+
+            if (State == OutreachState.RepliedYes && CooldownUntilUtc is not null)
+            {
+                return $"Follow-up due {CooldownUntilUtc.Value.ToLocalTime():yyyy-MM-dd}";
+            }
+
+            return string.Empty;
+        }
+    }
+
+    public bool HasWaitingUntilDisplay => !string.IsNullOrWhiteSpace(WaitingUntilDisplay);
 }

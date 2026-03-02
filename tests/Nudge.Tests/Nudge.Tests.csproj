@@ -23,6 +23,7 @@
   <ItemGroup>
     <ProjectReference Include="..\..\src\Nudge.Core\Nudge.Core.csproj" />
     <ProjectReference Include="..\..\src\Nudge.Cli\Nudge.Cli.csproj" />
+    <ProjectReference Include="..\..\src\Nudge.Ui\Nudge.Ui.csproj" />
   </ItemGroup>
 
 </Project>

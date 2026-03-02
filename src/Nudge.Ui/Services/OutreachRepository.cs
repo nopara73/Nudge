@@ -8,6 +8,7 @@ namespace Nudge.Ui.Services;
 public sealed class OutreachRepository
 {
     private const int CooldownDays = 90;
+    private const int RepliedYesFollowupDays = 30;
     private const string AutoSnoozeReleaseEventType = "AutoReleasedSnooze";
     private const string AutoCooldownReleaseEventType = "AutoReleasedCooldown";
     private readonly string _connectionString;
@@ -132,9 +133,10 @@ public sealed class OutreachRepository
                     WHEN 'ContactedWaiting' THEN 1
                     WHEN 'Snoozed' THEN 2
                     WHEN 'RepliedYes' THEN 3
-                    WHEN 'RepliedNo' THEN 4
-                    WHEN 'Dismissed' THEN 5
-                    ELSE 6
+                    WHEN 'InterviewDone' THEN 4
+                    WHEN 'RepliedNo' THEN 5
+                    WHEN 'Dismissed' THEN 6
+                    ELSE 7
                 END,
                 COALESCE(lrt.Score, 0.0) DESC,
                 COALESCE(lrt.ShowName, ts.ShowName, ts.IdentityKey) COLLATE NOCASE ASC
@@ -271,54 +273,58 @@ public sealed class OutreachRepository
         await connection.OpenAsync(cancellationToken);
         await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
 
-        var expiredIdentityKeys = new List<string>();
+        var expiredTargets = new List<(string IdentityKey, OutreachState State)>();
         await using (var selectCommand = connection.CreateCommand())
         {
             selectCommand.Transaction = transaction;
             selectCommand.CommandText = """
-                SELECT IdentityKey
+                SELECT IdentityKey, State
                 FROM TargetStates
                 WHERE
-                    State = @contactedState
+                    (State = @contactedState OR State = @repliedYesState)
                     AND CooldownUntilUtc IS NOT NULL
                     AND CooldownUntilUtc <= @nowUtc
                 """;
             selectCommand.Parameters.AddWithValue("@contactedState", OutreachState.ContactedWaiting.ToString());
+            selectCommand.Parameters.AddWithValue("@repliedYesState", OutreachState.RepliedYes.ToString());
             selectCommand.Parameters.AddWithValue("@nowUtc", nowText);
 
             await using var reader = await selectCommand.ExecuteReaderAsync(cancellationToken);
             while (await reader.ReadAsync(cancellationToken))
             {
-                expiredIdentityKeys.Add(reader.GetString(reader.GetOrdinal("IdentityKey")));
+                expiredTargets.Add((
+                    reader.GetString(reader.GetOrdinal("IdentityKey")),
+                    ParseState(reader.GetString(reader.GetOrdinal("State")))));
             }
         }
 
-        foreach (var identityKey in expiredIdentityKeys)
+        foreach (var target in expiredTargets)
         {
             await using var updateCommand = connection.CreateCommand();
             updateCommand.Transaction = transaction;
             updateCommand.CommandText = """
                 UPDATE TargetStates
                 SET
-                    State = @newState,
                     CooldownUntilUtc = NULL,
                     UpdatedAtUtc = @updatedAtUtc
                 WHERE IdentityKey = @identityKey
                 """;
-            updateCommand.Parameters.AddWithValue("@newState", OutreachState.New.ToString());
             updateCommand.Parameters.AddWithValue("@updatedAtUtc", nowText);
-            updateCommand.Parameters.AddWithValue("@identityKey", identityKey);
+            updateCommand.Parameters.AddWithValue("@identityKey", target.IdentityKey);
             await updateCommand.ExecuteNonQueryAsync(cancellationToken);
 
+            var note = target.State == OutreachState.RepliedYes
+                ? "Replied YES follow-up cooldown expired; target remains Replied YES and is actionable."
+                : "Contact cooldown expired; target remains Contacted and is actionable.";
             await InsertStateEventAsync(
                 connection,
                 transaction,
-                identityKey,
+                target.IdentityKey,
                 AutoCooldownReleaseEventType,
-                OutreachState.ContactedWaiting.ToString(),
-                OutreachState.New.ToString(),
+                target.State.ToString(),
+                target.State.ToString(),
                 now,
-                "Contact cooldown expired; target returned to New.",
+                note,
                 string.Empty,
                 cancellationToken);
         }
@@ -392,14 +398,15 @@ public sealed class OutreachRepository
 
     public Task MarkRepliedYesAsync(QueueItem item, string tags, string note, CancellationToken cancellationToken = default)
     {
+        var now = _timeProvider.GetUtcNow();
         return ApplyStateChangeAsync(
             item.IdentityKey,
             OutreachState.RepliedYes,
             "MarkedRepliedYes",
-            _timeProvider.GetUtcNow(),
+            now,
             tags,
             note,
-            cooldownUntilUtc: null,
+            cooldownUntilUtc: now.AddDays(RepliedYesFollowupDays),
             snoozeUntilUtc: null,
             contactedAtUtc: item.ContactedAtUtc,
             manualContactEmail: item.ManualContactEmail,
@@ -438,11 +445,27 @@ public sealed class OutreachRepository
             cancellationToken: cancellationToken);
     }
 
+    public Task MarkInterviewDoneAsync(QueueItem item, string tags, string note, CancellationToken cancellationToken = default)
+    {
+        return ApplyStateChangeAsync(
+            item.IdentityKey,
+            OutreachState.InterviewDone,
+            "MarkedInterviewDone",
+            _timeProvider.GetUtcNow(),
+            tags,
+            note,
+            cooldownUntilUtc: null,
+            snoozeUntilUtc: null,
+            contactedAtUtc: item.ContactedAtUtc,
+            manualContactEmail: item.ManualContactEmail,
+            cancellationToken: cancellationToken);
+    }
+
     public Task MarkSnoozedAsync(QueueItem item, DateTimeOffset snoozeUntilUtc, string tags, string note, CancellationToken cancellationToken = default)
     {
         if (!IsSnoozableState(item.State))
         {
-            throw new InvalidOperationException("Only New or ContactedWaiting targets can be snoozed.");
+            throw new InvalidOperationException("Only New targets can be snoozed.");
         }
 
         return ApplyStateChangeAsync(
@@ -936,22 +959,16 @@ public sealed class OutreachRepository
 
     private static bool IsSnoozableState(OutreachState state)
     {
-        return state is OutreachState.New or OutreachState.ContactedWaiting;
+        return state == OutreachState.New;
     }
 
     private static OutreachState ResolveSnoozeRestoreState(string? snoozedFromState, DateTimeOffset? cooldownUntilUtc)
     {
         var parsed = ParseState(snoozedFromState ?? string.Empty);
-        var baseState = parsed is OutreachState.New or OutreachState.ContactedWaiting
+        _ = cooldownUntilUtc;
+        return parsed is OutreachState.New or OutreachState.ContactedWaiting
             ? parsed
             : OutreachState.New;
-
-        if (baseState == OutreachState.ContactedWaiting && cooldownUntilUtc is null)
-        {
-            return OutreachState.New;
-        }
-
-        return baseState;
     }
 
     private static string? ResolveSnoozedFromState(OutreachState toState, OutreachState fromState, string? currentSnoozedFromState)

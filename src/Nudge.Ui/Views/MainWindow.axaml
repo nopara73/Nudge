@@ -166,11 +166,26 @@
                                                     <ListBox.ItemTemplate>
                                                         <DataTemplate>
                                                             <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
-                                                                <Grid RowDefinitions="Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="4">
+                                                                <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="4">
                                                                     <TextBlock Text="{Binding ShowName}" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap" />
+                                                                    <Border Grid.Column="1"
+                                                                            Background="#E5E7EB"
+                                                                            CornerRadius="10"
+                                                                            Padding="8,2"
+                                                                            HorizontalAlignment="Right"
+                                                                            VerticalAlignment="Top">
+                                                                        <TextBlock Text="{Binding StateDisplayLabel}"
+                                                                                   Foreground="#374151"
+                                                                                   FontSize="12"
+                                                                                   FontWeight="SemiBold" />
+                                                                    </Border>
                                                                     <TextBlock Grid.Row="1"
                                                                                Foreground="#4B5563"
                                                                                Text="{Binding OutreachPriority, StringFormat='Priority: {0}'}" />
+                                                                    <TextBlock Grid.Row="2"
+                                                                               Foreground="#6B7280"
+                                                                               Text="{Binding WaitingUntilDisplay}"
+                                                                               IsVisible="{Binding HasWaitingUntilDisplay}" />
                                                                 </Grid>
                                                             </Border>
                                                         </DataTemplate>

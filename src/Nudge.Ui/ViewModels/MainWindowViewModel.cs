@@ -33,6 +33,7 @@ public partial class MainWindowViewModel : ViewModelBase
         new OutreachOutcomeOption("New", OutreachOutcomeAction.New, null, null),
         new OutreachOutcomeOption("Contacted", OutreachOutcomeAction.ContactedWaiting, "#FEF3C7", "#92400E"),
         new OutreachOutcomeOption("Replied YES", OutreachOutcomeAction.RepliedYes, "#DCFCE7", "#166534"),
+        new OutreachOutcomeOption("Interview done", OutreachOutcomeAction.InterviewDone, "#D1FAE5", "#065F46"),
         new OutreachOutcomeOption("Replied NO", OutreachOutcomeAction.RepliedNo, "#FEE2E2", "#991B1B"),
         new OutreachOutcomeOption("Dismissed", OutreachOutcomeAction.Dismissed, "#E5E7EB", "#374151")
     ];
@@ -54,14 +55,11 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly OutreachRepository _repository;
     private readonly SessionStateStore _sessionStateStore;
     private readonly TimeProvider _timeProvider;
-    private static readonly IReadOnlyList<OutreachState> QueueStateDisplayOrder =
+    private static readonly IReadOnlyList<QueueBucket> QueueBucketDisplayOrder =
     [
-        OutreachState.New,
-        OutreachState.RepliedYes,
-        OutreachState.ContactedWaiting,
-        OutreachState.Snoozed,
-        OutreachState.RepliedNo,
-        OutreachState.Dismissed
+        QueueBucket.Actionable,
+        QueueBucket.Waiting,
+        QueueBucket.Done
     ];
     private bool _isSynchronizingOutreachOutcomeSelection;
 
@@ -345,9 +343,11 @@ public partial class MainWindowViewModel : ViewModelBase
 
             return SelectedQueueItem.State switch
             {
+                OutreachState.ContactedWaiting => "Snooze is unavailable for Contacted targets. Cooldown handles waiting.",
                 OutreachState.RepliedYes => "Snooze is unavailable for Replied YES targets.",
                 OutreachState.RepliedNo => "Snooze is unavailable for Replied NO targets.",
                 OutreachState.Dismissed => "Snooze is unavailable for Dismissed targets.",
+                OutreachState.InterviewDone => "Snooze is unavailable for Interview done targets.",
                 _ => "Snooze is available for this target."
             };
         }
@@ -625,7 +625,7 @@ public partial class MainWindowViewModel : ViewModelBase
         try
         {
             await _repository.MarkRepliedYesAsync(SelectedQueueItem, QueueTags, QueueNote);
-            RunStatus = $"Marked replied YES for {SelectedQueueItem.ShowName}.";
+            RunStatus = $"Marked replied YES for {SelectedQueueItem.ShowName}. Follow-up cooldown set for 30 days.";
             await RefreshQueueAsync();
             await RefreshHistoryAsync();
         }
@@ -686,7 +686,11 @@ public partial class MainWindowViewModel : ViewModelBase
                     break;
                 case OutreachOutcomeAction.RepliedYes:
                     await _repository.MarkRepliedYesAsync(SelectedQueueItem, QueueTags, QueueNote);
-                    RunStatus = $"Marked replied YES for {SelectedQueueItem.ShowName}.";
+                    RunStatus = $"Marked replied YES for {SelectedQueueItem.ShowName}. Follow-up cooldown set for 30 days.";
+                    break;
+                case OutreachOutcomeAction.InterviewDone:
+                    await _repository.MarkInterviewDoneAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked interview done for {SelectedQueueItem.ShowName}.";
                     break;
                 case OutreachOutcomeAction.RepliedNo:
                     await _repository.MarkRepliedNoAsync(SelectedQueueItem, QueueTags, QueueNote);
@@ -736,7 +740,11 @@ public partial class MainWindowViewModel : ViewModelBase
                     break;
                 case OutreachOutcomeAction.RepliedYes:
                     await _repository.MarkRepliedYesAsync(SelectedQueueItem, QueueTags, QueueNote);
-                    RunStatus = $"Marked replied YES for {SelectedQueueItem.ShowName}.";
+                    RunStatus = $"Marked replied YES for {SelectedQueueItem.ShowName}. Follow-up cooldown set for 30 days.";
+                    break;
+                case OutreachOutcomeAction.InterviewDone:
+                    await _repository.MarkInterviewDoneAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked interview done for {SelectedQueueItem.ShowName}.";
                     break;
                 case OutreachOutcomeAction.RepliedNo:
                     await _repository.MarkRepliedNoAsync(SelectedQueueItem, QueueTags, QueueNote);
@@ -801,7 +809,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
         if (!IsSnoozableState(SelectedQueueItem.State))
         {
-            RunStatus = "Snooze is only available for New or Contacted targets.";
+            RunStatus = "Snooze is only available for New targets.";
             return;
         }
 
@@ -936,7 +944,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private static bool IsSnoozableState(OutreachState state)
     {
-        return state is OutreachState.New or OutreachState.ContactedWaiting;
+        return state == OutreachState.New;
     }
 
     private static bool TryOpenUrlInNewWindow(Uri uri, out string error)
@@ -1245,21 +1253,21 @@ public partial class MainWindowViewModel : ViewModelBase
             .ToList();
 
         QueueGroups.Clear();
-        var groupedByState = filteredQueueItems
-            .GroupBy(item => item.State)
+        var groupedByBucket = filteredQueueItems
+            .GroupBy(GetQueueBucketForItem)
             .ToDictionary(group => group.Key, group => group.OrderByDescending(item => item.Score).ToList());
 
-        foreach (var state in QueueStateDisplayOrder)
+        foreach (var bucket in QueueBucketDisplayOrder)
         {
-            if (!groupedByState.TryGetValue(state, out var items) || items.Count == 0)
+            if (!groupedByBucket.TryGetValue(bucket, out var items) || items.Count == 0)
             {
                 continue;
             }
 
             QueueGroups.Add(new QueueStateGroup(
-                BuildQueueStateHeader(state, items.Count),
+                BuildQueueBucketHeader(bucket, items.Count),
                 new ObservableCollection<QueueItem>(items),
-                IsExpandedByDefault(state)));
+                IsExpandedByDefault(bucket)));
         }
 
         var hasSelectedQueueItemVisible = SelectedQueueItem is not null &&
@@ -1274,25 +1282,46 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(QueueEmptyMessage));
     }
 
-    private static string BuildQueueStateHeader(OutreachState state, int count)
+    private QueueBucket GetQueueBucketForItem(QueueItem item)
     {
-        var label = state switch
+        return item.State switch
         {
-            OutreachState.New => "New",
-            OutreachState.ContactedWaiting => "Contacted",
-            OutreachState.Snoozed => "Snoozed",
-            OutreachState.RepliedYes => "Replied YES",
-            OutreachState.RepliedNo => "Replied NO",
-            OutreachState.Dismissed => "Dismissed",
-            _ => state.ToString()
+            OutreachState.New => QueueBucket.Actionable,
+            OutreachState.ContactedWaiting => IsActiveCooldown(item.CooldownUntilUtc)
+                ? QueueBucket.Waiting
+                : QueueBucket.Actionable,
+            OutreachState.Snoozed => QueueBucket.Waiting,
+            OutreachState.RepliedYes => IsActiveCooldown(item.CooldownUntilUtc)
+                ? QueueBucket.Waiting
+                : QueueBucket.Actionable,
+            OutreachState.InterviewDone => QueueBucket.Done,
+            OutreachState.RepliedNo => QueueBucket.Done,
+            OutreachState.Dismissed => QueueBucket.Done,
+            _ => QueueBucket.Actionable
+        };
+    }
+
+    private bool IsActiveCooldown(DateTimeOffset? cooldownUntilUtc)
+    {
+        return cooldownUntilUtc is not null && cooldownUntilUtc > _timeProvider.GetUtcNow();
+    }
+
+    private static string BuildQueueBucketHeader(QueueBucket bucket, int count)
+    {
+        var label = bucket switch
+        {
+            QueueBucket.Actionable => "Actionable",
+            QueueBucket.Waiting => "Waiting",
+            QueueBucket.Done => "Done",
+            _ => bucket.ToString()
         };
 
         return $"{label} ({count})";
     }
 
-    private static bool IsExpandedByDefault(OutreachState state)
+    private static bool IsExpandedByDefault(QueueBucket bucket)
     {
-        return state is OutreachState.New;
+        return bucket == QueueBucket.Actionable;
     }
 
     private void PopulateSelectedNicheFitHighlights()
@@ -1464,7 +1493,15 @@ public partial class MainWindowViewModel : ViewModelBase
         ContactedWaiting = 1,
         RepliedYes = 2,
         RepliedNo = 3,
-        Dismissed = 4
+        Dismissed = 4,
+        InterviewDone = 5
+    }
+
+    private enum QueueBucket
+    {
+        Actionable = 0,
+        Waiting = 1,
+        Done = 2
     }
 
     private void SyncSelectedOutreachOutcomeToState(OutreachState state)
@@ -1475,6 +1512,7 @@ public partial class MainWindowViewModel : ViewModelBase
             OutreachState.RepliedYes => OutreachOutcomeAction.RepliedYes,
             OutreachState.RepliedNo => OutreachOutcomeAction.RepliedNo,
             OutreachState.Dismissed => OutreachOutcomeAction.Dismissed,
+            OutreachState.InterviewDone => OutreachOutcomeAction.InterviewDone,
             _ => OutreachOutcomeAction.New
         };
 

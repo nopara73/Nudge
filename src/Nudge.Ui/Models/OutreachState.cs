@@ -7,5 +7,6 @@ public enum OutreachState
     RepliedYes = 2,
     RepliedNo = 3,
     Snoozed = 4,
-    Dismissed = 5
+    Dismissed = 5,
+    InterviewDone = 6
 }
