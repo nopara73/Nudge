@@ -148,8 +148,13 @@
                                 <ItemsControl ItemsSource="{Binding QueueGroups}">
                                     <ItemsControl.ItemTemplate>
                                         <DataTemplate>
-                                            <Expander Header="{Binding Header}" IsExpanded="True" Margin="0,0,0,8">
+                                            <Expander Header="{Binding Header}"
+                                                      IsExpanded="{Binding IsExpanded}"
+                                                      Margin="0,0,0,8"
+                                                      HorizontalAlignment="Stretch"
+                                                      HorizontalContentAlignment="Stretch">
                                                 <ListBox ItemsSource="{Binding Items}"
+                                                         HorizontalAlignment="Stretch"
                                                          SelectedItem="{ReflectionBinding $parent[Window].DataContext.SelectedQueueItem}"
                                                          ScrollViewer.VerticalScrollBarVisibility="Disabled"
                                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
@@ -215,21 +220,34 @@
                                     <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="10">
                                         <StackPanel Spacing="8">
                                             <TextBlock Text="Snooze" FontWeight="SemiBold" Foreground="#111827" />
-                                            <ComboBox ItemsSource="{Binding SnoozePresetOptions}"
-                                                      SelectedItem="{Binding SelectedSnoozePreset}"
-                                                      Width="190">
-                                                <ComboBox.ItemTemplate>
-                                                    <DataTemplate>
-                                                        <TextBlock Text="{Binding Label}" />
-                                                    </DataTemplate>
-                                                </ComboBox.ItemTemplate>
-                                            </ComboBox>
-                                            <TextBlock Text="{Binding SnoozeUntilDisplay}" FontWeight="SemiBold" />
-                                            <Button Content="Snooze"
-                                                    MinHeight="34"
-                                                    Width="190"
-                                                    HorizontalAlignment="Left"
-                                                    Command="{Binding SnoozeCommand}" />
+                                            <Border IsVisible="{Binding IsSnoozeUnavailable}"
+                                                    Background="#F9FAFB"
+                                                    BorderBrush="#E5E7EB"
+                                                    BorderThickness="1"
+                                                    CornerRadius="4"
+                                                    Padding="8">
+                                                <TextBlock Text="{Binding SnoozeUnavailableReason}"
+                                                           Foreground="#6B7280"
+                                                           TextWrapping="Wrap" />
+                                            </Border>
+                                            <StackPanel Spacing="8"
+                                                        IsEnabled="{Binding IsSnoozeSectionEnabled}">
+                                                <ComboBox ItemsSource="{Binding SnoozePresetOptions}"
+                                                          SelectedItem="{Binding SelectedSnoozePreset}"
+                                                          Width="190">
+                                                    <ComboBox.ItemTemplate>
+                                                        <DataTemplate>
+                                                            <TextBlock Text="{Binding Label}" />
+                                                        </DataTemplate>
+                                                    </ComboBox.ItemTemplate>
+                                                </ComboBox>
+                                                <TextBlock Text="{Binding SnoozeUntilDisplay}" FontWeight="SemiBold" />
+                                                <Button Content="Snooze"
+                                                        MinHeight="34"
+                                                        Width="190"
+                                                        HorizontalAlignment="Left"
+                                                        Command="{Binding SnoozeCommand}" />
+                                            </StackPanel>
                                         </StackPanel>
                                     </Border>
 

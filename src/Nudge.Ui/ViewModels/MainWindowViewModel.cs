@@ -31,9 +31,10 @@ public partial class MainWindowViewModel : ViewModelBase
     private static readonly IReadOnlyList<OutreachOutcomeOption> DefaultOutreachOutcomes =
     [
         new OutreachOutcomeOption("New", OutreachOutcomeAction.New, null, null),
-        new OutreachOutcomeOption("Contacted (waiting)", OutreachOutcomeAction.ContactedWaiting, "#FEF3C7", "#92400E"),
+        new OutreachOutcomeOption("Contacted", OutreachOutcomeAction.ContactedWaiting, "#FEF3C7", "#92400E"),
         new OutreachOutcomeOption("Replied YES", OutreachOutcomeAction.RepliedYes, "#DCFCE7", "#166534"),
-        new OutreachOutcomeOption("Replied NO", OutreachOutcomeAction.RepliedNo, "#FEE2E2", "#991B1B")
+        new OutreachOutcomeOption("Replied NO", OutreachOutcomeAction.RepliedNo, "#FEE2E2", "#991B1B"),
+        new OutreachOutcomeOption("Dismissed", OutreachOutcomeAction.Dismissed, "#E5E7EB", "#374151")
     ];
 
     private static readonly string[] DefaultRunKeywords =
@@ -56,10 +57,11 @@ public partial class MainWindowViewModel : ViewModelBase
     private static readonly IReadOnlyList<OutreachState> QueueStateDisplayOrder =
     [
         OutreachState.New,
+        OutreachState.RepliedYes,
         OutreachState.ContactedWaiting,
         OutreachState.Snoozed,
-        OutreachState.RepliedYes,
-        OutreachState.RepliedNo
+        OutreachState.RepliedNo,
+        OutreachState.Dismissed
     ];
     private bool _isSynchronizingOutreachOutcomeSelection;
 
@@ -320,6 +322,37 @@ public partial class MainWindowViewModel : ViewModelBase
         }
     }
 
+    public bool IsSnoozeSectionEnabled =>
+        SelectedQueueItem is not null &&
+        IsSnoozableState(SelectedQueueItem.State) &&
+        !IsBusy;
+
+    public bool IsSnoozeUnavailable => !IsSnoozeSectionEnabled;
+
+    public string SnoozeUnavailableReason
+    {
+        get
+        {
+            if (SelectedQueueItem is null)
+            {
+                return "Select a target to enable snooze.";
+            }
+
+            if (IsBusy)
+            {
+                return "Please wait until the current action completes.";
+            }
+
+            return SelectedQueueItem.State switch
+            {
+                OutreachState.RepliedYes => "Snooze is unavailable for Replied YES targets.",
+                OutreachState.RepliedNo => "Snooze is unavailable for Replied NO targets.",
+                OutreachState.Dismissed => "Snooze is unavailable for Dismissed targets.",
+                _ => "Snooze is available for this target."
+            };
+        }
+    }
+
     partial void OnCurrentViewIndexChanged(int value)
     {
         PersistSession();
@@ -354,6 +387,13 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(SnoozeHelperText));
         OnPropertyChanged(nameof(SnoozeUntilDisplay));
+    }
+
+    partial void OnIsBusyChanged(bool value)
+    {
+        OnPropertyChanged(nameof(IsSnoozeSectionEnabled));
+        OnPropertyChanged(nameof(IsSnoozeUnavailable));
+        OnPropertyChanged(nameof(SnoozeUnavailableReason));
     }
 
     partial void OnSelectedSnoozePresetChanged(SnoozePresetOption? value)
@@ -652,6 +692,10 @@ public partial class MainWindowViewModel : ViewModelBase
                     await _repository.MarkRepliedNoAsync(SelectedQueueItem, QueueTags, QueueNote);
                     RunStatus = $"Marked replied NO (forever block) for {SelectedQueueItem.ShowName}.";
                     break;
+                case OutreachOutcomeAction.Dismissed:
+                    await _repository.MarkDismissedAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked dismissed for {SelectedQueueItem.ShowName}.";
+                    break;
                 case OutreachOutcomeAction.New:
                     await _repository.ResetOutcomeAsync(SelectedQueueItem, QueueTags, QueueNote);
                     RunStatus = $"Reset outreach outcome for {SelectedQueueItem.ShowName} to New.";
@@ -697,6 +741,10 @@ public partial class MainWindowViewModel : ViewModelBase
                 case OutreachOutcomeAction.RepliedNo:
                     await _repository.MarkRepliedNoAsync(SelectedQueueItem, QueueTags, QueueNote);
                     RunStatus = $"Marked replied NO (forever block) for {SelectedQueueItem.ShowName}.";
+                    break;
+                case OutreachOutcomeAction.Dismissed:
+                    await _repository.MarkDismissedAsync(SelectedQueueItem, QueueTags, QueueNote);
+                    RunStatus = $"Marked dismissed for {SelectedQueueItem.ShowName}.";
                     break;
                 case OutreachOutcomeAction.New:
                     await _repository.ResetOutcomeAsync(SelectedQueueItem, QueueTags, QueueNote);
@@ -751,6 +799,12 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        if (!IsSnoozableState(SelectedQueueItem.State))
+        {
+            RunStatus = "Snooze is only available for New or Contacted targets.";
+            return;
+        }
+
         var normalizedSnoozeUtc = NormalizeSnoozeDateToUtc(SnoozeUntilUtc.Value);
         if (!IsSnoozeDateValid(normalizedSnoozeUtc))
         {
@@ -774,7 +828,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private bool CanSnooze()
     {
-        return SelectedQueueItem is not null && SnoozeUntilUtc is not null && IsSnoozeDateValid(SnoozeUntilUtc.Value) && !IsBusy;
+        return SelectedQueueItem is not null &&
+               SnoozeUntilUtc is not null &&
+               IsSnoozeDateValid(SnoozeUntilUtc.Value) &&
+               !IsBusy;
     }
 
     [RelayCommand]
@@ -875,6 +932,11 @@ public partial class MainWindowViewModel : ViewModelBase
 
         var encodedFeedUrl = Uri.EscapeDataString(feedUri.ToString());
         return Uri.TryCreate($"{RssViewerBaseUrl}{encodedFeedUrl}", UriKind.Absolute, out viewerUri);
+    }
+
+    private static bool IsSnoozableState(OutreachState state)
+    {
+        return state is OutreachState.New or OutreachState.ContactedWaiting;
     }
 
     private static bool TryOpenUrlInNewWindow(Uri uri, out string error)
@@ -1162,6 +1224,9 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedActivityDisplay));
         OnPropertyChanged(nameof(SnoozeHelperText));
         OnPropertyChanged(nameof(SnoozeUntilDisplay));
+        OnPropertyChanged(nameof(IsSnoozeSectionEnabled));
+        OnPropertyChanged(nameof(IsSnoozeUnavailable));
+        OnPropertyChanged(nameof(SnoozeUnavailableReason));
     }
 
     private void RebuildQueueGroups()
@@ -1193,7 +1258,8 @@ public partial class MainWindowViewModel : ViewModelBase
 
             QueueGroups.Add(new QueueStateGroup(
                 BuildQueueStateHeader(state, items.Count),
-                new ObservableCollection<QueueItem>(items)));
+                new ObservableCollection<QueueItem>(items),
+                IsExpandedByDefault(state)));
         }
 
         var hasSelectedQueueItemVisible = SelectedQueueItem is not null &&
@@ -1213,14 +1279,20 @@ public partial class MainWindowViewModel : ViewModelBase
         var label = state switch
         {
             OutreachState.New => "New",
-            OutreachState.ContactedWaiting => "Contacted - waiting",
+            OutreachState.ContactedWaiting => "Contacted",
             OutreachState.Snoozed => "Snoozed",
             OutreachState.RepliedYes => "Replied YES",
             OutreachState.RepliedNo => "Replied NO",
+            OutreachState.Dismissed => "Dismissed",
             _ => state.ToString()
         };
 
         return $"{label} ({count})";
+    }
+
+    private static bool IsExpandedByDefault(OutreachState state)
+    {
+        return state is OutreachState.New;
     }
 
     private void PopulateSelectedNicheFitHighlights()
@@ -1373,10 +1445,11 @@ public partial class MainWindowViewModel : ViewModelBase
         string? BackgroundColor,
         string? ForegroundColor);
 
-    public sealed class QueueStateGroup(string header, ObservableCollection<QueueItem> items)
+    public sealed class QueueStateGroup(string header, ObservableCollection<QueueItem> items, bool isExpanded)
     {
         public string Header { get; } = header;
         public ObservableCollection<QueueItem> Items { get; } = items;
+        public bool IsExpanded { get; } = isExpanded;
     }
 
     public enum SnoozePresetUnit
@@ -1390,7 +1463,8 @@ public partial class MainWindowViewModel : ViewModelBase
         New = 0,
         ContactedWaiting = 1,
         RepliedYes = 2,
-        RepliedNo = 3
+        RepliedNo = 3,
+        Dismissed = 4
     }
 
     private void SyncSelectedOutreachOutcomeToState(OutreachState state)
@@ -1400,6 +1474,7 @@ public partial class MainWindowViewModel : ViewModelBase
             OutreachState.ContactedWaiting => OutreachOutcomeAction.ContactedWaiting,
             OutreachState.RepliedYes => OutreachOutcomeAction.RepliedYes,
             OutreachState.RepliedNo => OutreachOutcomeAction.RepliedNo,
+            OutreachState.Dismissed => OutreachOutcomeAction.Dismissed,
             _ => OutreachOutcomeAction.New
         };
 

@@ -8,6 +8,8 @@ namespace Nudge.Ui.Services;
 public sealed class OutreachRepository
 {
     private const int CooldownDays = 90;
+    private const string AutoSnoozeReleaseEventType = "AutoReleasedSnooze";
+    private const string AutoCooldownReleaseEventType = "AutoReleasedCooldown";
     private readonly string _connectionString;
     private readonly TimeProvider _timeProvider;
 
@@ -65,6 +67,7 @@ public sealed class OutreachRepository
     public async Task<IReadOnlyList<QueueItem>> GetTrackerItemsAsync(CancellationToken cancellationToken = default)
     {
         await ReleaseExpiredSnoozesAsync(cancellationToken);
+        await ReleaseExpiredCooldownsAsync(cancellationToken);
 
         const string sql = """
             WITH LatestRun AS (
@@ -192,27 +195,135 @@ public sealed class OutreachRepository
 
     private async Task ReleaseExpiredSnoozesAsync(CancellationToken cancellationToken)
     {
-        var now = _timeProvider.GetUtcNow().ToString("O");
+        var now = _timeProvider.GetUtcNow();
+        var nowText = now.ToString("O");
 
         await using var connection = new SqliteConnection(_connectionString);
         await connection.OpenAsync(cancellationToken);
-        await using var command = connection.CreateCommand();
-        command.CommandText = """
-            UPDATE TargetStates
-            SET
-                State = @newState,
-                SnoozeUntilUtc = NULL,
-                UpdatedAtUtc = @updatedAtUtc
-            WHERE
-                State = @snoozedState
-                AND SnoozeUntilUtc IS NOT NULL
-                AND SnoozeUntilUtc <= @updatedAtUtc
-            """;
-        command.Parameters.AddWithValue("@newState", OutreachState.New.ToString());
-        command.Parameters.AddWithValue("@snoozedState", OutreachState.Snoozed.ToString());
-        command.Parameters.AddWithValue("@updatedAtUtc", now);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
 
-        await command.ExecuteNonQueryAsync(cancellationToken);
+        var expired = new List<(string IdentityKey, OutreachState RestoreState)>();
+        await using (var selectCommand = connection.CreateCommand())
+        {
+            selectCommand.Transaction = transaction;
+            selectCommand.CommandText = """
+                SELECT IdentityKey, SnoozedFromState, CooldownUntilUtc
+                FROM TargetStates
+                WHERE
+                    State = @snoozedState
+                    AND SnoozeUntilUtc IS NOT NULL
+                    AND SnoozeUntilUtc <= @nowUtc
+                """;
+            selectCommand.Parameters.AddWithValue("@snoozedState", OutreachState.Snoozed.ToString());
+            selectCommand.Parameters.AddWithValue("@nowUtc", nowText);
+
+            await using var reader = await selectCommand.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                var identityKey = reader.GetString(reader.GetOrdinal("IdentityKey"));
+                var snoozedFromState = ReadNullableString(reader, "SnoozedFromState");
+                var cooldownUntilUtc = ReadDateTimeOffset(reader, "CooldownUntilUtc");
+                var restoreState = ResolveSnoozeRestoreState(snoozedFromState, cooldownUntilUtc);
+                expired.Add((identityKey, restoreState));
+            }
+        }
+
+        foreach (var item in expired)
+        {
+            await using var updateCommand = connection.CreateCommand();
+            updateCommand.Transaction = transaction;
+            updateCommand.CommandText = """
+                UPDATE TargetStates
+                SET
+                    State = @newState,
+                    SnoozeUntilUtc = NULL,
+                    SnoozedFromState = NULL,
+                    UpdatedAtUtc = @updatedAtUtc
+                WHERE IdentityKey = @identityKey
+                """;
+            updateCommand.Parameters.AddWithValue("@newState", item.RestoreState.ToString());
+            updateCommand.Parameters.AddWithValue("@updatedAtUtc", nowText);
+            updateCommand.Parameters.AddWithValue("@identityKey", item.IdentityKey);
+            await updateCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            await InsertStateEventAsync(
+                connection,
+                transaction,
+                item.IdentityKey,
+                AutoSnoozeReleaseEventType,
+                OutreachState.Snoozed.ToString(),
+                item.RestoreState.ToString(),
+                now,
+                "Snooze expired; target returned to active queue.",
+                string.Empty,
+                cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task ReleaseExpiredCooldownsAsync(CancellationToken cancellationToken)
+    {
+        var now = _timeProvider.GetUtcNow();
+        var nowText = now.ToString("O");
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await connection.BeginTransactionAsync(cancellationToken);
+
+        var expiredIdentityKeys = new List<string>();
+        await using (var selectCommand = connection.CreateCommand())
+        {
+            selectCommand.Transaction = transaction;
+            selectCommand.CommandText = """
+                SELECT IdentityKey
+                FROM TargetStates
+                WHERE
+                    State = @contactedState
+                    AND CooldownUntilUtc IS NOT NULL
+                    AND CooldownUntilUtc <= @nowUtc
+                """;
+            selectCommand.Parameters.AddWithValue("@contactedState", OutreachState.ContactedWaiting.ToString());
+            selectCommand.Parameters.AddWithValue("@nowUtc", nowText);
+
+            await using var reader = await selectCommand.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                expiredIdentityKeys.Add(reader.GetString(reader.GetOrdinal("IdentityKey")));
+            }
+        }
+
+        foreach (var identityKey in expiredIdentityKeys)
+        {
+            await using var updateCommand = connection.CreateCommand();
+            updateCommand.Transaction = transaction;
+            updateCommand.CommandText = """
+                UPDATE TargetStates
+                SET
+                    State = @newState,
+                    CooldownUntilUtc = NULL,
+                    UpdatedAtUtc = @updatedAtUtc
+                WHERE IdentityKey = @identityKey
+                """;
+            updateCommand.Parameters.AddWithValue("@newState", OutreachState.New.ToString());
+            updateCommand.Parameters.AddWithValue("@updatedAtUtc", nowText);
+            updateCommand.Parameters.AddWithValue("@identityKey", identityKey);
+            await updateCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            await InsertStateEventAsync(
+                connection,
+                transaction,
+                identityKey,
+                AutoCooldownReleaseEventType,
+                OutreachState.ContactedWaiting.ToString(),
+                OutreachState.New.ToString(),
+                now,
+                "Contact cooldown expired; target returned to New.",
+                string.Empty,
+                cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<HistoryEvent>> GetHistoryAsync(string? identityFilter = null, CancellationToken cancellationToken = default)
@@ -329,6 +440,11 @@ public sealed class OutreachRepository
 
     public Task MarkSnoozedAsync(QueueItem item, DateTimeOffset snoozeUntilUtc, string tags, string note, CancellationToken cancellationToken = default)
     {
+        if (!IsSnoozableState(item.State))
+        {
+            throw new InvalidOperationException("Only New or ContactedWaiting targets can be snoozed.");
+        }
+
         return ApplyStateChangeAsync(
             item.IdentityKey,
             OutreachState.Snoozed,
@@ -336,7 +452,7 @@ public sealed class OutreachRepository
             _timeProvider.GetUtcNow(),
             tags,
             note,
-            cooldownUntilUtc: null,
+            cooldownUntilUtc: item.CooldownUntilUtc,
             snoozeUntilUtc: snoozeUntilUtc,
             contactedAtUtc: item.ContactedAtUtc,
             manualContactEmail: item.ManualContactEmail,
@@ -380,6 +496,7 @@ public sealed class OutreachRepository
             stateValue,
             currentState?.CooldownUntilUtc,
             currentState?.SnoozeUntilUtc,
+            currentState?.SnoozedFromState,
             currentState?.ContactedAtUtc,
             normalizedManual,
             tags,
@@ -421,6 +538,7 @@ public sealed class OutreachRepository
 
         var currentState = await GetCurrentStateAsync(connection, transaction, identityKey, cancellationToken);
         var fromState = currentState?.State ?? OutreachState.New;
+        var snoozedFromState = ResolveSnoozedFromState(toState, fromState, currentState?.SnoozedFromState);
 
         await UpsertTargetStateAsync(
             connection,
@@ -431,6 +549,7 @@ public sealed class OutreachRepository
             toState,
             cooldownUntilUtc,
             snoozeUntilUtc,
+            snoozedFromState,
             contactedAtUtc,
             string.IsNullOrWhiteSpace(manualContactEmail) ? currentState?.ManualContactEmail : TargetIdentityResolver.NormalizeEmail(manualContactEmail),
             tags,
@@ -552,6 +671,7 @@ public sealed class OutreachRepository
                 OutreachState.New,
                 cooldownUntilUtc: null,
                 snoozeUntilUtc: null,
+                snoozedFromState: null,
                 contactedAtUtc: null,
                 manualContactEmail: null,
                 tags: string.Empty,
@@ -575,6 +695,7 @@ public sealed class OutreachRepository
             current.State,
             current.CooldownUntilUtc,
             current.SnoozeUntilUtc,
+            current.SnoozedFromState,
             current.ContactedAtUtc,
             current.ManualContactEmail,
             current.Tags,
@@ -592,7 +713,7 @@ public sealed class OutreachRepository
         await using var command = connection.CreateCommand();
         command.Transaction = transaction;
         command.CommandText = """
-            SELECT IdentityKey, ShowName, ContactEmail, State, CooldownUntilUtc, SnoozeUntilUtc, ContactedAtUtc,
+            SELECT IdentityKey, ShowName, ContactEmail, State, CooldownUntilUtc, SnoozeUntilUtc, SnoozedFromState, ContactedAtUtc,
                    ManualContactEmail, Tags, Note
             FROM TargetStates
             WHERE IdentityKey = @identityKey
@@ -614,6 +735,7 @@ public sealed class OutreachRepository
             State = ParseState(reader.GetString(reader.GetOrdinal("State"))),
             CooldownUntilUtc = ReadDateTimeOffset(reader, "CooldownUntilUtc"),
             SnoozeUntilUtc = ReadDateTimeOffset(reader, "SnoozeUntilUtc"),
+            SnoozedFromState = ReadNullableString(reader, "SnoozedFromState"),
             ContactedAtUtc = ReadDateTimeOffset(reader, "ContactedAtUtc"),
             ManualContactEmail = ReadNullableString(reader, "ManualContactEmail"),
             Tags = reader.GetString(reader.GetOrdinal("Tags")),
@@ -630,6 +752,7 @@ public sealed class OutreachRepository
         OutreachState state,
         DateTimeOffset? cooldownUntilUtc,
         DateTimeOffset? snoozeUntilUtc,
+        string? snoozedFromState,
         DateTimeOffset? contactedAtUtc,
         string? manualContactEmail,
         string tags,
@@ -642,16 +765,17 @@ public sealed class OutreachRepository
         command.CommandText = """
             INSERT INTO TargetStates(
                 IdentityKey, ShowName, ContactEmail, State, CooldownUntilUtc, SnoozeUntilUtc,
-                ContactedAtUtc, ManualContactEmail, Tags, Note, LastSeenAtUtc, UpdatedAtUtc)
+                SnoozedFromState, ContactedAtUtc, ManualContactEmail, Tags, Note, LastSeenAtUtc, UpdatedAtUtc)
             VALUES(
                 @identityKey, @showName, @contactEmail, @state, @cooldownUntilUtc, @snoozeUntilUtc,
-                @contactedAtUtc, @manualContactEmail, @tags, @note, @lastSeenAtUtc, @updatedAtUtc)
+                @snoozedFromState, @contactedAtUtc, @manualContactEmail, @tags, @note, @lastSeenAtUtc, @updatedAtUtc)
             ON CONFLICT(IdentityKey) DO UPDATE SET
                 ShowName = excluded.ShowName,
                 ContactEmail = COALESCE(TargetStates.ContactEmail, excluded.ContactEmail),
                 State = excluded.State,
                 CooldownUntilUtc = excluded.CooldownUntilUtc,
                 SnoozeUntilUtc = excluded.SnoozeUntilUtc,
+                SnoozedFromState = excluded.SnoozedFromState,
                 ContactedAtUtc = excluded.ContactedAtUtc,
                 ManualContactEmail = excluded.ManualContactEmail,
                 Tags = excluded.Tags,
@@ -665,6 +789,7 @@ public sealed class OutreachRepository
         command.Parameters.AddWithValue("@state", state.ToString());
         command.Parameters.AddWithValue("@cooldownUntilUtc", cooldownUntilUtc?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("@snoozeUntilUtc", snoozeUntilUtc?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@snoozedFromState", (object?)snoozedFromState ?? DBNull.Value);
         command.Parameters.AddWithValue("@contactedAtUtc", contactedAtUtc?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("@manualContactEmail", (object?)manualContactEmail ?? DBNull.Value);
         command.Parameters.AddWithValue("@tags", tags);
@@ -752,6 +877,7 @@ public sealed class OutreachRepository
                 State TEXT NOT NULL,
                 CooldownUntilUtc TEXT NULL,
                 SnoozeUntilUtc TEXT NULL,
+                SnoozedFromState TEXT NULL,
                 ContactedAtUtc TEXT NULL,
                 ManualContactEmail TEXT NULL,
                 Tags TEXT NOT NULL,
@@ -777,6 +903,8 @@ public sealed class OutreachRepository
             CREATE INDEX IF NOT EXISTS IX_TargetStateEvents_OccurredAtUtc ON TargetStateEvents(OccurredAtUtc DESC);
             """;
         command.ExecuteNonQuery();
+
+        EnsureColumnExists(connection, "TargetStates", "SnoozedFromState", "TEXT NULL");
     }
 
     private static OutreachState ParseState(string value)
@@ -804,6 +932,69 @@ public sealed class OutreachRepository
     private static string? ToNullIfWhitespace(string? value)
     {
         return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static bool IsSnoozableState(OutreachState state)
+    {
+        return state is OutreachState.New or OutreachState.ContactedWaiting;
+    }
+
+    private static OutreachState ResolveSnoozeRestoreState(string? snoozedFromState, DateTimeOffset? cooldownUntilUtc)
+    {
+        var parsed = ParseState(snoozedFromState ?? string.Empty);
+        var baseState = parsed is OutreachState.New or OutreachState.ContactedWaiting
+            ? parsed
+            : OutreachState.New;
+
+        if (baseState == OutreachState.ContactedWaiting && cooldownUntilUtc is null)
+        {
+            return OutreachState.New;
+        }
+
+        return baseState;
+    }
+
+    private static string? ResolveSnoozedFromState(OutreachState toState, OutreachState fromState, string? currentSnoozedFromState)
+    {
+        if (toState != OutreachState.Snoozed)
+        {
+            return null;
+        }
+
+        if (fromState == OutreachState.Snoozed && !string.IsNullOrWhiteSpace(currentSnoozedFromState))
+        {
+            return currentSnoozedFromState;
+        }
+
+        return fromState switch
+        {
+            OutreachState.New => OutreachState.New.ToString(),
+            OutreachState.ContactedWaiting => OutreachState.ContactedWaiting.ToString(),
+            _ => OutreachState.New.ToString()
+        };
+    }
+
+    private static void EnsureColumnExists(
+        SqliteConnection connection,
+        string tableName,
+        string columnName,
+        string columnDefinition)
+    {
+        using var tableInfoCommand = connection.CreateCommand();
+        tableInfoCommand.CommandText = $"PRAGMA table_info({tableName});";
+        using var reader = tableInfoCommand.ExecuteReader();
+        while (reader.Read())
+        {
+            var existingColumnName = reader.GetString(reader.GetOrdinal("name"));
+            if (string.Equals(existingColumnName, columnName, StringComparison.OrdinalIgnoreCase))
+            {
+                return;
+            }
+        }
+
+        using var alterCommand = connection.CreateCommand();
+        alterCommand.CommandText = $"ALTER TABLE {tableName} ADD COLUMN {columnName} {columnDefinition};";
+        alterCommand.ExecuteNonQuery();
     }
 
     private static IReadOnlyList<QueueEpisode> ParseRecentEpisodesJson(string rawJson)
@@ -921,6 +1112,7 @@ public sealed class OutreachRepository
         public OutreachState State { get; init; }
         public DateTimeOffset? CooldownUntilUtc { get; init; }
         public DateTimeOffset? SnoozeUntilUtc { get; init; }
+        public string? SnoozedFromState { get; init; }
         public DateTimeOffset? ContactedAtUtc { get; init; }
         public string? ManualContactEmail { get; init; }
         public string Tags { get; init; } = string.Empty;
