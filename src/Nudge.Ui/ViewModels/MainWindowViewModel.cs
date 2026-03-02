@@ -348,7 +348,6 @@ public partial class MainWindowViewModel : ViewModelBase
         }
         SyncSelectedOutreachOutcomeToState(value.State);
         RefreshSelectedTargetComputedState();
-        _ = RefreshHistoryAsync(value.IdentityKey);
     }
 
     partial void OnSnoozeUntilUtcChanged(DateTimeOffset? value)
@@ -374,7 +373,7 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
-        _ = ApplyOutcomeFromSelectionAsync(value);
+        FireAndForget(ApplyOutcomeFromSelectionAsync(value), "Failed to apply outreach outcome");
     }
 
     partial void OnHistoryFilterTextChanged(string value)
@@ -491,7 +490,10 @@ public partial class MainWindowViewModel : ViewModelBase
             _sessionStateStore.Clear();
 
             QueueItems.Clear();
+            QueueGroups.Clear();
             SelectedQueueItem = null;
+            OnPropertyChanged(nameof(FilteredQueueCount));
+            OnPropertyChanged(nameof(QueueFilterSummary));
             OnPropertyChanged(nameof(ContactableCount));
             OnPropertyChanged(nameof(QueueEmptyMessage));
 
@@ -789,7 +791,7 @@ public partial class MainWindowViewModel : ViewModelBase
             await _repository.SaveAnnotationAsync(SelectedQueueItem, QueueTags, QueueNote, ManualContactEmail);
             RunStatus = $"Saved note for {SelectedQueueItem.ShowName}.";
             await RefreshQueueAsync();
-            await RefreshHistoryAsync(SelectedQueueItem.IdentityKey);
+            await RefreshHistoryAsync();
         }
         finally
         {
@@ -897,10 +899,29 @@ public partial class MainWindowViewModel : ViewModelBase
                     return true;
                 }
 
-                error = "The default browser does not expose a supported 'new window' launch mode.";
+                // Fallback to shell-open when browser-specific new-window flags are unavailable.
+                if (TryOpenUrlWithShell(uri, out error))
+                {
+                    return true;
+                }
+
+                error = $"The default browser does not expose a supported 'new window' launch mode. {error}";
                 return false;
             }
 
+            return TryOpenUrlWithShell(uri, out error);
+        }
+        catch (Exception ex)
+        {
+            error = ex.Message;
+            return false;
+        }
+    }
+
+    private static bool TryOpenUrlWithShell(Uri uri, out string error)
+    {
+        try
+        {
             Process.Start(new ProcessStartInfo
             {
                 FileName = uri.ToString(),
@@ -1270,6 +1291,23 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         return $"{Math.Clamp(value.Value, 0.0, 1.0) * 100:F1}%";
+    }
+
+    private void FireAndForget(Task task, string failureContext)
+    {
+        _ = ObserveBackgroundTaskAsync(task, failureContext);
+    }
+
+    private async Task ObserveBackgroundTaskAsync(Task task, string failureContext)
+    {
+        try
+        {
+            await task;
+        }
+        catch (Exception ex)
+        {
+            RunStatus = $"{failureContext}: {ex.Message}";
+        }
     }
 
     private DateTimeOffset BuildSnoozeDateFromPreset(SnoozePresetOption preset)

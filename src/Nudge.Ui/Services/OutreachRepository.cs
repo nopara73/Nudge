@@ -64,6 +64,8 @@ public sealed class OutreachRepository
 
     public async Task<IReadOnlyList<QueueItem>> GetTrackerItemsAsync(CancellationToken cancellationToken = default)
     {
+        await ReleaseExpiredSnoozesAsync(cancellationToken);
+
         const string sql = """
             WITH LatestRun AS (
                 SELECT Id
@@ -186,6 +188,31 @@ public sealed class OutreachRepository
         }
 
         return queue;
+    }
+
+    private async Task ReleaseExpiredSnoozesAsync(CancellationToken cancellationToken)
+    {
+        var now = _timeProvider.GetUtcNow().ToString("O");
+
+        await using var connection = new SqliteConnection(_connectionString);
+        await connection.OpenAsync(cancellationToken);
+        await using var command = connection.CreateCommand();
+        command.CommandText = """
+            UPDATE TargetStates
+            SET
+                State = @newState,
+                SnoozeUntilUtc = NULL,
+                UpdatedAtUtc = @updatedAtUtc
+            WHERE
+                State = @snoozedState
+                AND SnoozeUntilUtc IS NOT NULL
+                AND SnoozeUntilUtc <= @updatedAtUtc
+            """;
+        command.Parameters.AddWithValue("@newState", OutreachState.New.ToString());
+        command.Parameters.AddWithValue("@snoozedState", OutreachState.Snoozed.ToString());
+        command.Parameters.AddWithValue("@updatedAtUtc", now);
+
+        await command.ExecuteNonQueryAsync(cancellationToken);
     }
 
     public async Task<IReadOnlyList<HistoryEvent>> GetHistoryAsync(string? identityFilter = null, CancellationToken cancellationToken = default)
