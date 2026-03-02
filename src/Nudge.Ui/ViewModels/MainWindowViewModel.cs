@@ -218,6 +218,22 @@ public partial class MainWindowViewModel : ViewModelBase
     public string SelectedFeedUrl =>
         string.IsNullOrWhiteSpace(SelectedQueueItem?.FeedUrl) ? "-" : SelectedQueueItem!.FeedUrl;
 
+    public string SelectedPodcastTitleAndHostsDisplay
+    {
+        get
+        {
+            var title = string.IsNullOrWhiteSpace(SelectedQueueItem?.ShowName) ? "-" : SelectedQueueItem!.ShowName;
+            var hosts = SelectedQueueItem?.PodcastHosts
+                .Where(host => !string.IsNullOrWhiteSpace(host))
+                .Select(host => host.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray() ?? Array.Empty<string>();
+            var hostDisplay = hosts.Length == 0 ? "-" : string.Join(", ", hosts);
+            var hostLabel = hosts.Length == 1 ? "Host" : "Hosts";
+            return $"Title: {title}\n{hostLabel}: {hostDisplay}";
+        }
+    }
+
     public string SelectedLanguageDisplay =>
         string.IsNullOrWhiteSpace(SelectedQueueItem?.DetectedLanguage) ? "-" : SelectedQueueItem!.DetectedLanguage;
 
@@ -1238,6 +1254,7 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedRecentEpisodes));
         OnPropertyChanged(nameof(SelectedEpisodesEmptyMessage));
         OnPropertyChanged(nameof(SelectedNicheFitHighlightsEmptyMessage));
+        OnPropertyChanged(nameof(SelectedPodcastTitleAndHostsDisplay));
         OnPropertyChanged(nameof(SelectedFeedUrl));
         OnPropertyChanged(nameof(SelectedLanguageDisplay));
         OnPropertyChanged(nameof(SelectedPriorityDisplay));

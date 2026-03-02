@@ -9,6 +9,7 @@ public sealed partial class RssParser : IRssParser
 {
     private static readonly XNamespace ItunesNs = "http://www.itunes.com/dtds/podcast-1.0.dtd";
     private const int RecentEpisodeWindow = 7;
+    private static readonly string[] HostSeparators = [",", "&", " and ", " with ", "|", "/", ";"];
 
     public Task<Result<RssParsePayload>> ParseAsync(string feedXml, CancellationToken cancellationToken = default)
     {
@@ -30,11 +31,13 @@ public sealed partial class RssParser : IRssParser
 
             var email = ExtractEmail(channel);
             var language = ExtractLanguage(channel);
+            var hosts = ExtractHosts(channel);
             var episodes = ParseEpisodes(channel, issues);
             var payload = new RssParsePayload
             {
                 PodcastEmail = email,
                 PodcastLanguage = language,
+                PodcastHosts = hosts,
                 Episodes = episodes
             };
 
@@ -137,6 +140,57 @@ public sealed partial class RssParser : IRssParser
         }
 
         return rawLanguage.Trim();
+    }
+
+    private static IReadOnlyList<string> ExtractHosts(XElement channel)
+    {
+        var candidates = new List<string?>();
+        candidates.Add(channel.Element(ItunesNs + "author")?.Value);
+        candidates.Add(channel.Element("author")?.Value);
+        candidates.Add(channel.Element(ItunesNs + "owner")?.Element(ItunesNs + "name")?.Value);
+
+        var hosts = new List<string>();
+        foreach (var rawCandidate in candidates)
+        {
+            if (string.IsNullOrWhiteSpace(rawCandidate))
+            {
+                continue;
+            }
+
+            foreach (var parsedHost in SplitHostNames(rawCandidate))
+            {
+                if (hosts.Any(existing => string.Equals(existing, parsedHost, StringComparison.OrdinalIgnoreCase)))
+                {
+                    continue;
+                }
+
+                hosts.Add(parsedHost);
+            }
+        }
+
+        return hosts;
+    }
+
+    private static IReadOnlyList<string> SplitHostNames(string rawValue)
+    {
+        var normalized = rawValue.Trim();
+        if (string.IsNullOrWhiteSpace(normalized))
+        {
+            return Array.Empty<string>();
+        }
+
+        var hostNames = new List<string> { normalized };
+        foreach (var separator in HostSeparators)
+        {
+            hostNames = hostNames
+                .SelectMany(name => name.Split(separator, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries))
+                .ToList();
+        }
+
+        return hostNames
+            .Where(name => !string.IsNullOrWhiteSpace(name))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
     }
 
     [GeneratedRegex(@"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]

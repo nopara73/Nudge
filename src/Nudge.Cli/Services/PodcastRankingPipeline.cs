@@ -211,6 +211,7 @@ public sealed class PodcastRankingPipeline(
             OutreachPriority = outreachPriority,
             Score = adjustedScore,
             NewestEpisodePublishedAtUtc = intent.NewestEpisodePublishedAtUtc,
+            PodcastHosts = parseResult.Payload.PodcastHosts,
             RecentEpisodeTitles = eligibleEpisodes.Select(e => e.Title).ToArray(),
             RecentEpisodes = eligibleEpisodes
                 .Select(e => new RankedEpisode

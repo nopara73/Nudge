@@ -17,6 +17,7 @@ public sealed record RankedTarget
     public string OutreachPriority { get; init; } = "Low";
     public double Score { get; init; }
     public DateTimeOffset? NewestEpisodePublishedAtUtc { get; init; }
+    public IReadOnlyList<string> PodcastHosts { get; init; } = Array.Empty<string>();
     public IReadOnlyList<string> RecentEpisodeTitles { get; init; } = Array.Empty<string>();
     public IReadOnlyList<RankedEpisode> RecentEpisodes { get; init; } = Array.Empty<RankedEpisode>();
 }

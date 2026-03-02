@@ -93,4 +93,33 @@ public sealed class RssParserTests
         Assert.Equal(new DateTimeOffset(2026, 2, 18, 13, 0, 0, TimeSpan.Zero), result.Payload!.Episodes[0].PublishedAtUtc);
         Assert.Contains(result.Errors, issue => issue.Code == "invalid_pub_date");
     }
+
+    [Fact]
+    public async Task ParseAsync_ExtractsSingleAndMultipleHosts_FromCommonFields()
+    {
+        const string xml =
+            """
+            <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+              <channel>
+                <title>Host Parsing Podcast</title>
+                <itunes:author>Jane Doe &amp; John Roe</itunes:author>
+                <itunes:owner>
+                  <itunes:name>Jane Doe</itunes:name>
+                </itunes:owner>
+                <item>
+                  <title>Episode 1</title>
+                  <description>Desc</description>
+                  <pubDate>Fri, 20 Feb 2026 10:00:00 GMT</pubDate>
+                </item>
+              </channel>
+            </rss>
+            """;
+
+        var parser = new RssParser();
+        var result = await parser.ParseAsync(xml);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Payload);
+        Assert.Equal(["Jane Doe", "John Roe"], result.Payload!.PodcastHosts);
+    }
 }

@@ -73,6 +73,9 @@ public sealed class CliOutputResultItem
     [JsonPropertyName("newestEpisodePublishedAtUtc")]
     public DateTimeOffset? NewestEpisodePublishedAtUtc { get; init; }
 
+    [JsonPropertyName("podcastHosts")]
+    public List<string> PodcastHosts { get; init; } = [];
+
     [JsonPropertyName("recentEpisodeTitles")]
     public List<string> RecentEpisodeTitles { get; init; } = [];
 

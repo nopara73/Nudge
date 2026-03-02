@@ -92,6 +92,7 @@ public sealed class OutreachRepository
                     rt.ActivityScore,
                     rt.OutreachPriority,
                     rt.NewestEpisodePublishedAtUtc,
+                    rt.PodcastHostsJson,
                     rt.RecentEpisodeTitlesJson,
                     rt.NicheFitBreakdownJson,
                     ROW_NUMBER() OVER (
@@ -116,6 +117,7 @@ public sealed class OutreachRepository
                 COALESCE(lrt.ActivityScore, 0.0) AS ActivityScore,
                 COALESCE(lrt.OutreachPriority, 'Low') AS OutreachPriority,
                 lrt.NewestEpisodePublishedAtUtc,
+                COALESCE(lrt.PodcastHostsJson, '[]') AS PodcastHostsJson,
                 COALESCE(lrt.RecentEpisodeTitlesJson, '[]') AS RecentEpisodeTitlesJson,
                 COALESCE(lrt.NicheFitBreakdownJson, '{}') AS NicheFitBreakdownJson,
                 COALESCE(ts.State, 'New') AS State,
@@ -157,6 +159,8 @@ public sealed class OutreachRepository
 
             var recentEpisodesJson = reader.GetString(reader.GetOrdinal("RecentEpisodeTitlesJson"));
             var recentEpisodes = ParseRecentEpisodesJson(recentEpisodesJson);
+            var podcastHostsJson = reader.GetString(reader.GetOrdinal("PodcastHostsJson"));
+            var podcastHosts = ParseStringArrayJson(podcastHostsJson);
 
             var contactEmail = ReadNullableString(reader, "ContactEmail");
             var manualContactEmail = ReadNullableString(reader, "ManualContactEmail");
@@ -181,6 +185,7 @@ public sealed class OutreachRepository
                 ActivityScore = reader.GetDouble(reader.GetOrdinal("ActivityScore")),
                 OutreachPriority = reader.GetString(reader.GetOrdinal("OutreachPriority")),
                 NewestEpisodePublishedAtUtc = ReadDateTimeOffset(reader, "NewestEpisodePublishedAtUtc"),
+                PodcastHosts = podcastHosts,
                 RecentEpisodes = recentEpisodes,
                 NicheFitBreakdownJson = reader.GetString(reader.GetOrdinal("NicheFitBreakdownJson")),
                 State = state,
@@ -637,11 +642,11 @@ public sealed class OutreachRepository
             INSERT INTO RunTargets(
                 RunId, IdentityKey, ShowId, ShowName, DetectedLanguage, FeedUrl, ContactEmail,
                 Reach, Frequency, NicheFit, ActivityScore, OutreachPriority, Score,
-                NewestEpisodePublishedAtUtc, RecentEpisodeTitlesJson, NicheFitBreakdownJson)
+                NewestEpisodePublishedAtUtc, PodcastHostsJson, RecentEpisodeTitlesJson, NicheFitBreakdownJson)
             VALUES(
                 @runId, @identityKey, @showId, @showName, @detectedLanguage, @feedUrl, @contactEmail,
                 @reach, @frequency, @nicheFit, @activityScore, @outreachPriority, @score,
-                @newestEpisodePublishedAtUtc, @recentEpisodeTitlesJson, @nicheFitBreakdownJson)
+                @newestEpisodePublishedAtUtc, @podcastHostsJson, @recentEpisodeTitlesJson, @nicheFitBreakdownJson)
             """;
 
         command.Parameters.AddWithValue("@runId", runId);
@@ -659,6 +664,7 @@ public sealed class OutreachRepository
         command.Parameters.AddWithValue("@outreachPriority", item.OutreachPriority);
         command.Parameters.AddWithValue("@score", item.Score);
         command.Parameters.AddWithValue("@newestEpisodePublishedAtUtc", item.NewestEpisodePublishedAtUtc?.ToString("O") ?? (object)DBNull.Value);
+        command.Parameters.AddWithValue("@podcastHostsJson", JsonSerializer.Serialize(item.PodcastHosts));
         var recentEpisodes = item.RecentEpisodes.Count > 0
             ? item.RecentEpisodes.Select(e => new StoredEpisode
             {
@@ -888,6 +894,7 @@ public sealed class OutreachRepository
                 OutreachPriority TEXT NOT NULL,
                 Score REAL NOT NULL,
                 NewestEpisodePublishedAtUtc TEXT NULL,
+                PodcastHostsJson TEXT NOT NULL DEFAULT '[]',
                 RecentEpisodeTitlesJson TEXT NOT NULL,
                 NicheFitBreakdownJson TEXT NOT NULL,
                 FOREIGN KEY(RunId) REFERENCES Runs(Id)
@@ -928,6 +935,7 @@ public sealed class OutreachRepository
         command.ExecuteNonQuery();
 
         EnsureColumnExists(connection, "TargetStates", "SnoozedFromState", "TEXT NULL");
+        EnsureColumnExists(connection, "RunTargets", "PodcastHostsJson", "TEXT NOT NULL DEFAULT '[]'");
     }
 
     private static OutreachState ParseState(string value)
@@ -1070,6 +1078,36 @@ public sealed class OutreachRepository
         catch (JsonException)
         {
             return Array.Empty<QueueEpisode>();
+        }
+    }
+
+    private static IReadOnlyList<string> ParseStringArrayJson(string rawJson)
+    {
+        if (string.IsNullOrWhiteSpace(rawJson))
+        {
+            return Array.Empty<string>();
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(rawJson);
+            if (document.RootElement.ValueKind != JsonValueKind.Array)
+            {
+                return Array.Empty<string>();
+            }
+
+            return document.RootElement
+                .EnumerateArray()
+                .Where(element => element.ValueKind == JsonValueKind.String)
+                .Select(element => element.GetString())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!.Trim())
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+        }
+        catch (JsonException)
+        {
+            return Array.Empty<string>();
         }
     }
 
