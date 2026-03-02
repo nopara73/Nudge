@@ -17,7 +17,9 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
     private const double ActivityRecent30Days = 1.0;
     private const double ActivityRecent90Days = 0.7;
     private const double ActivityRecent180Days = 0.4;
-    private const double ActivityStale = 0.15;
+    private const double ActivityStaleDense = 0.12;
+    private const double ActivityStaleSparse = 0.06;
+    private const double ActivityStaleSingleEpisode = 0.03;
     private const int RecentEpisodeTitleWindow = 5;
     private static readonly string[] HighIntentTokens =
     [
@@ -43,7 +45,7 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             .OrderByDescending(e => e.PublishedAtUtc)
             .FirstOrDefault()
             ?.PublishedAtUtc;
-        var activityScore = CalculateActivityScore(newest, _timeProvider.GetUtcNow());
+        var activityScore = CalculateActivityScore(newest, show.Episodes.Count, _timeProvider.GetUtcNow());
         var baseScore = (reach * ReachWeight) + (frequency * FrequencyWeight) + (nicheFitResult.NormalizedScore * NicheFitWeight);
         var score = baseScore * activityScore;
 
@@ -246,11 +248,13 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         }
     }
 
-    private static double CalculateActivityScore(DateTimeOffset? newestEpisodePublishedAtUtc, DateTimeOffset now)
+    private static double CalculateActivityScore(DateTimeOffset? newestEpisodePublishedAtUtc, int episodeCount, DateTimeOffset now)
     {
         if (!newestEpisodePublishedAtUtc.HasValue)
         {
-            return ActivityStale;
+            return episodeCount <= 1
+                ? ActivityStaleSingleEpisode
+                : ActivityStaleSparse;
         }
 
         var ageDays = (now - newestEpisodePublishedAtUtc.Value).TotalDays;
@@ -269,7 +273,17 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             return ActivityRecent180Days;
         }
 
-        return ActivityStale;
+        if (episodeCount <= 1)
+        {
+            return ActivityStaleSingleEpisode;
+        }
+
+        if (episodeCount <= 3)
+        {
+            return ActivityStaleSparse;
+        }
+
+        return ActivityStaleDense;
     }
 
     private static double Clamp01(double value) => Math.Clamp(value, 0, 1);

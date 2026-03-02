@@ -8,6 +8,7 @@ public sealed class PodcastRankingPipeline(
     IPodcastSearchClient searchClient,
     IRssFeedClient feedClient,
     IRssParser rssParser,
+    IEpisodeTranscriptService episodeTranscriptService,
     IScoringService scoringService,
     TimeProvider timeProvider)
 {
@@ -29,6 +30,7 @@ public sealed class PodcastRankingPipeline(
     private readonly IPodcastSearchClient _searchClient = searchClient;
     private readonly IRssFeedClient _feedClient = feedClient;
     private readonly IRssParser _rssParser = rssParser;
+    private readonly IEpisodeTranscriptService _episodeTranscriptService = episodeTranscriptService;
     private readonly IScoringService _scoringService = scoringService;
     private readonly TimeProvider _timeProvider = timeProvider;
 
@@ -167,6 +169,10 @@ public sealed class PodcastRankingPipeline(
             return null;
         }
 
+        var transcriptTasks = eligibleEpisodes
+            .Select(episode => _episodeTranscriptService.PopulateTranscriptAsync(episode, parseResult.Payload.PodcastHosts, cancellationToken));
+        eligibleEpisodes = await Task.WhenAll(transcriptTasks);
+
         var missingContactEmail = string.IsNullOrWhiteSpace(parseResult.Payload.PodcastEmail);
         if (missingContactEmail)
         {
@@ -218,7 +224,11 @@ public sealed class PodcastRankingPipeline(
                 {
                     Title = e.Title,
                     Url = e.Url,
-                    PublishedAtUtc = e.PublishedAtUtc
+                    AudioUrl = e.AudioUrl,
+                    PublishedAtUtc = e.PublishedAtUtc,
+                    TranscriptUrl = e.TranscriptUrl,
+                    Transcript = e.Transcript,
+                    HostTranscriptLines = e.HostTranscriptLines ?? Array.Empty<string>()
                 })
                 .ToArray()
         };

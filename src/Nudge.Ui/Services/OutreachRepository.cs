@@ -670,7 +670,11 @@ public sealed class OutreachRepository
             {
                 Title = e.Title,
                 Url = e.Url,
-                PublishedAtUtc = e.PublishedAtUtc
+                AudioUrl = e.AudioUrl,
+                PublishedAtUtc = e.PublishedAtUtc,
+                TranscriptUrl = e.TranscriptUrl,
+                Transcript = e.Transcript,
+                HostTranscriptLines = e.HostTranscriptLines
             }).ToArray()
             : item.RecentEpisodeTitles.Select(title => new StoredEpisode { Title = title }).ToArray();
         command.Parameters.AddWithValue("@recentEpisodeTitlesJson", JsonSerializer.Serialize(recentEpisodes));
@@ -1066,7 +1070,11 @@ public sealed class OutreachRepository
                         {
                             Title = title.Trim(),
                             Url = GetEpisodeProperty(element, "url"),
-                            PublishedAtUtc = GetEpisodeDateTimeOffsetProperty(element, "publishedAtUtc")
+                            AudioUrl = GetEpisodeProperty(element, "audioUrl"),
+                            PublishedAtUtc = GetEpisodeDateTimeOffsetProperty(element, "publishedAtUtc"),
+                            TranscriptUrl = GetEpisodeProperty(element, "transcriptUrl"),
+                            Transcript = GetEpisodeProperty(element, "transcript"),
+                            HostTranscriptLines = GetEpisodeStringArrayProperty(element, "hostTranscriptLines")
                         });
                         break;
                     }
@@ -1152,11 +1160,37 @@ public sealed class OutreachRepository
         return null;
     }
 
+    private static IReadOnlyList<string> GetEpisodeStringArrayProperty(JsonElement element, string propertyName)
+    {
+        foreach (var property in element.EnumerateObject())
+        {
+            if (!property.Name.Equals(propertyName, StringComparison.OrdinalIgnoreCase) ||
+                property.Value.ValueKind != JsonValueKind.Array)
+            {
+                continue;
+            }
+
+            return property.Value
+                .EnumerateArray()
+                .Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString())
+                .Where(value => !string.IsNullOrWhiteSpace(value))
+                .Select(value => value!.Trim())
+                .ToArray();
+        }
+
+        return Array.Empty<string>();
+    }
+
     private sealed class StoredEpisode
     {
         public required string Title { get; init; }
         public string? Url { get; init; }
+        public string? AudioUrl { get; init; }
         public DateTimeOffset? PublishedAtUtc { get; init; }
+        public string? TranscriptUrl { get; init; }
+        public string? Transcript { get; init; }
+        public IReadOnlyList<string> HostTranscriptLines { get; init; } = Array.Empty<string>();
     }
 
     private sealed class TargetStateRow

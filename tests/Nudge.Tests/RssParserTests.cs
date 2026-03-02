@@ -122,4 +122,112 @@ public sealed class RssParserTests
         Assert.NotNull(result.Payload);
         Assert.Equal(["Jane Doe", "John Roe"], result.Payload!.PodcastHosts);
     }
+
+    [Fact]
+    public async Task ParseAsync_InferHostFromTitle_WhenAuthorAndOwnerMissing()
+    {
+        const string xml =
+            """
+            <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+              <channel>
+                <title>Super Strength Show with Ray Toulany | Interviews with Health and Fitness Leaders</title>
+                <itunes:author></itunes:author>
+                <itunes:owner>
+                  <itunes:name></itunes:name>
+                </itunes:owner>
+                <item>
+                  <title>Episode 1</title>
+                  <description>Desc</description>
+                  <pubDate>Fri, 20 Feb 2026 10:00:00 GMT</pubDate>
+                </item>
+              </channel>
+            </rss>
+            """;
+
+        var parser = new RssParser();
+        var result = await parser.ParseAsync(xml);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Payload);
+        Assert.Equal(["Ray Toulany"], result.Payload!.PodcastHosts);
+    }
+
+    [Fact]
+    public async Task ParseAsync_ExtractsTranscriptAndAudioUrls_FromEpisodeElements()
+    {
+        const string xml =
+            """
+            <rss version="2.0" xmlns:podcast="https://podcastindex.org/namespace/1.0">
+              <channel>
+                <title>Transcript Podcast</title>
+                <item>
+                  <title>Episode 1</title>
+                  <description>Desc</description>
+                  <pubDate>Fri, 20 Feb 2026 10:00:00 GMT</pubDate>
+                  <enclosure url="https://example.com/audio/1.mp3" type="audio/mpeg" />
+                  <podcast:transcript url="https://example.com/transcripts/1.txt" type="text/plain" />
+                </item>
+              </channel>
+            </rss>
+            """;
+
+        var parser = new RssParser();
+        var result = await parser.ParseAsync(xml);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Payload);
+        var episode = Assert.Single(result.Payload!.Episodes);
+        Assert.Equal("https://example.com/audio/1.mp3", episode.AudioUrl);
+        Assert.Equal("https://example.com/transcripts/1.txt", episode.TranscriptUrl);
+    }
+
+    [Fact]
+    public async Task ParseAsync_UsesGuidPermalink_WhenLinkElementMissing()
+    {
+        const string xml =
+            """
+            <rss version="2.0">
+              <channel>
+                <title>Guid Link Podcast</title>
+                <item>
+                  <title>Episode 1</title>
+                  <guid isPermaLink="true">https://example.com/episodes/1</guid>
+                </item>
+              </channel>
+            </rss>
+            """;
+
+        var parser = new RssParser();
+        var result = await parser.ParseAsync(xml);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Payload);
+        var episode = Assert.Single(result.Payload!.Episodes);
+        Assert.Equal("https://example.com/episodes/1", episode.Url);
+    }
+
+    [Fact]
+    public async Task ParseAsync_UsesAtomLinkHref_WhenRssLinkAndGuidMissing()
+    {
+        const string xml =
+            """
+            <rss version="2.0" xmlns:atom="http://www.w3.org/2005/Atom">
+              <channel>
+                <title>Atom Link Podcast</title>
+                <item>
+                  <title>Episode 1</title>
+                  <atom:link href="https://example.com/episodes/atom-1" rel="alternate" />
+                </item>
+              </channel>
+            </rss>
+            """;
+
+        var parser = new RssParser();
+        var result = await parser.ParseAsync(xml);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Payload);
+        var episode = Assert.Single(result.Payload!.Episodes);
+        Assert.Equal("https://example.com/episodes/atom-1", episode.Url);
+    }
 }

@@ -5,5 +5,9 @@ public sealed record Episode(
     string Description,
     DateTimeOffset? PublishedAtUtc,
     string? RawPublishedDate = null,
-    string? Url = null
+    string? Url = null,
+    string? AudioUrl = null,
+    string? TranscriptUrl = null,
+    string? Transcript = null,
+    IReadOnlyList<string>? HostTranscriptLines = null
 );

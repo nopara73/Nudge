@@ -8,6 +8,7 @@ namespace Nudge.Cli.Services;
 public sealed partial class RssParser : IRssParser
 {
     private static readonly XNamespace ItunesNs = "http://www.itunes.com/dtds/podcast-1.0.dtd";
+    private static readonly XNamespace AtomNs = "http://www.w3.org/2005/Atom";
     private const int RecentEpisodeWindow = 7;
     private static readonly string[] HostSeparators = [",", "&", " and ", " with ", "|", "/", ";"];
 
@@ -60,7 +61,9 @@ public sealed partial class RssParser : IRssParser
             var title = item.Element("title")?.Value?.Trim() ?? string.Empty;
             var description = item.Element("description")?.Value?.Trim() ?? string.Empty;
             var rawPubDate = item.Element("pubDate")?.Value?.Trim();
-            var link = item.Element("link")?.Value?.Trim();
+            var link = ExtractEpisodeUrl(item);
+            var audioUrl = item.Element("enclosure")?.Attribute("url")?.Value?.Trim();
+            var transcriptUrl = ExtractTranscriptUrl(item);
 
             DateTimeOffset? publishedAtUtc = null;
             if (!string.IsNullOrWhiteSpace(rawPubDate))
@@ -75,7 +78,7 @@ public sealed partial class RssParser : IRssParser
                 }
             }
 
-            feedOrderEpisodes.Add((new Episode(title, description, publishedAtUtc, rawPubDate, link), index));
+            feedOrderEpisodes.Add((new Episode(title, description, publishedAtUtc, rawPubDate, link, audioUrl, transcriptUrl), index));
         }
 
         return feedOrderEpisodes
@@ -168,8 +171,56 @@ public sealed partial class RssParser : IRssParser
             }
         }
 
-        return hosts;
+        if (hosts.Count > 0)
+        {
+            return hosts;
+        }
+
+        return InferHostsFromChannelTitle(channel);
     }
+
+    private static IReadOnlyList<string> InferHostsFromChannelTitle(XElement channel)
+    {
+        var title = channel.Element("title")?.Value?.Trim();
+        if (string.IsNullOrWhiteSpace(title))
+        {
+            return Array.Empty<string>();
+        }
+
+        var match = TitleWithHostsRegex().Match(title);
+        if (!match.Success)
+        {
+            return Array.Empty<string>();
+        }
+
+        var rawHosts = match.Groups["hosts"].Value?.Trim();
+        if (string.IsNullOrWhiteSpace(rawHosts))
+        {
+            return Array.Empty<string>();
+        }
+
+        return SplitHostNames(rawHosts)
+            .Where(IsLikelyPersonName)
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+    }
+
+    private static bool IsLikelyPersonName(string value)
+    {
+        var tokens = value
+            .Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(token => token.All(character => char.IsLetter(character) || character is '\'' or '-'))
+            .ToArray();
+        if (tokens.Length is < 2 or > 4)
+        {
+            return false;
+        }
+
+        return tokens.All(token => token.Length >= 2 && char.IsUpper(token[0]));
+    }
+
+    [GeneratedRegex(@"\bwith\s+(?<hosts>[^|:\-]+)", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
+    private static partial Regex TitleWithHostsRegex();
 
     private static IReadOnlyList<string> SplitHostNames(string rawValue)
     {
@@ -187,10 +238,61 @@ public sealed partial class RssParser : IRssParser
                 .ToList();
         }
 
-        return hostNames
+        return NormalizeHostNames(hostNames);
+    }
+
+    private static IReadOnlyList<string> NormalizeHostNames(IEnumerable<string> hostNames) =>
+        hostNames
             .Where(name => !string.IsNullOrWhiteSpace(name))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToArray();
+
+    private static string? ExtractTranscriptUrl(XElement item)
+    {
+        var transcriptElement = item
+            .Elements()
+            .FirstOrDefault(element => string.Equals(element.Name.LocalName, "transcript", StringComparison.OrdinalIgnoreCase));
+        if (transcriptElement is null)
+        {
+            return null;
+        }
+
+        var url = transcriptElement.Attribute("url")?.Value?.Trim();
+        if (!string.IsNullOrWhiteSpace(url))
+        {
+            return url;
+        }
+
+        var value = transcriptElement.Value?.Trim();
+        return string.IsNullOrWhiteSpace(value) ? null : value;
+    }
+
+    private static string? ExtractEpisodeUrl(XElement item)
+    {
+        var rssLink = item.Element("link")?.Value?.Trim();
+        if (!string.IsNullOrWhiteSpace(rssLink))
+        {
+            return rssLink;
+        }
+
+        var guid = item.Element("guid");
+        var guidValue = guid?.Value?.Trim();
+        if (!string.IsNullOrWhiteSpace(guidValue) &&
+            Uri.TryCreate(guidValue, UriKind.Absolute, out _))
+        {
+            var isPermaLink = guid?.Attribute("isPermaLink")?.Value;
+            if (string.IsNullOrWhiteSpace(isPermaLink) ||
+                bool.TryParse(isPermaLink, out var parsed) && parsed)
+            {
+                return guidValue;
+            }
+        }
+
+        var atomLinkHref = item
+            .Elements(AtomNs + "link")
+            .Select(element => element.Attribute("href")?.Value?.Trim())
+            .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
+        return string.IsNullOrWhiteSpace(atomLinkHref) ? null : atomLinkHref;
     }
 
     [GeneratedRegex(@"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]

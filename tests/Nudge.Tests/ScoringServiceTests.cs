@@ -54,8 +54,8 @@ public sealed class ScoringServiceTests
         Assert.Equal(0.5, result.Reach, 10);
         Assert.Equal(0, result.Frequency, 10);
         Assert.Equal(0, result.NicheFit, 10);
-        Assert.Equal(0.15, result.ActivityScore, 10);
-        Assert.Equal(0.02625, result.Score, 10);
+        Assert.Equal(0.03, result.ActivityScore, 10);
+        Assert.Equal(0.00525, result.Score, 10);
     }
 
     [Fact]
@@ -311,7 +311,7 @@ public sealed class ScoringServiceTests
         Assert.Equal(1.0, service.Score(d30, ["x"]).ActivityScore, 10);
         Assert.Equal(0.7, service.Score(d90, ["x"]).ActivityScore, 10);
         Assert.Equal(0.4, service.Score(d180, ["x"]).ActivityScore, 10);
-        Assert.Equal(0.15, service.Score(stale, ["x"]).ActivityScore, 10);
+        Assert.Equal(0.03, service.Score(stale, ["x"]).ActivityScore, 10);
     }
 
     private static Show BuildShow(

@@ -26,5 +26,9 @@ public sealed record RankedEpisode
 {
     public required string Title { get; init; }
     public string? Url { get; init; }
+    public string? AudioUrl { get; init; }
     public DateTimeOffset? PublishedAtUtc { get; init; }
+    public string? TranscriptUrl { get; init; }
+    public string? Transcript { get; init; }
+    public IReadOnlyList<string> HostTranscriptLines { get; init; } = Array.Empty<string>();
 }

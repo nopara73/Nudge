@@ -438,6 +438,7 @@ public sealed class PodcastRankingPipelineTests
             new StubPodcastSearchClient(candidates),
             new StubRssFeedClient(payloads, failures),
             new StubRssParser(payloads),
+            new PassThroughTranscriptService(),
             new ScoringService(new FixedTimeProvider(now)),
             new FixedTimeProvider(now));
     }
@@ -624,5 +625,16 @@ public sealed class PodcastRankingPipelineTests
         private readonly DateTimeOffset _utcNow = utcNow;
 
         public override DateTimeOffset GetUtcNow() => _utcNow;
+    }
+
+    private sealed class PassThroughTranscriptService : IEpisodeTranscriptService
+    {
+        public Task<Episode> PopulateTranscriptAsync(
+            Episode episode,
+            IReadOnlyList<string> podcastHosts,
+            CancellationToken cancellationToken = default)
+        {
+            return Task.FromResult(episode);
+        }
     }
 }

@@ -119,6 +119,9 @@ static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, ICo
     serviceCollection.AddSingleton(options);
     serviceCollection.AddSingleton<IScoringService, ScoringService>();
     serviceCollection.AddSingleton<IRssParser, RssParser>();
+    serviceCollection.AddSingleton<IHostTranscriptLineExtractor, HostTranscriptLineExtractor>();
+    serviceCollection.AddSingleton<IEpisodeTranscriptService, EpisodeTranscriptService>();
+    serviceCollection.AddSingleton<IEpisodeSttTranscriber, NoOpEpisodeSttTranscriber>();
     serviceCollection.AddSingleton<MockPodcastSearchClient>();
     serviceCollection.AddHttpClient("podcast-search", (provider, client) =>
     {
@@ -138,6 +141,11 @@ static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, ICo
     serviceCollection.AddHttpClient("rss", client =>
     {
         client.Timeout = TimeSpan.FromSeconds(10);
+    });
+    serviceCollection.AddSingleton<ITranscriptContentClient>(provider =>
+    {
+        var factory = provider.GetRequiredService<IHttpClientFactory>();
+        return new HttpTranscriptContentClient(factory.CreateClient("rss"));
     });
     serviceCollection.AddSingleton<IRssFeedClient>(provider =>
     {

@@ -54,6 +54,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private readonly CliRunnerService _cliRunner;
     private readonly OutreachRepository _repository;
     private readonly SessionStateStore _sessionStateStore;
+    private readonly EpisodeTranscriptAcquisitionService _transcriptAcquisitionService;
     private readonly TimeProvider _timeProvider;
     private static readonly IReadOnlyList<QueueBucket> QueueBucketDisplayOrder =
     [
@@ -67,11 +68,13 @@ public partial class MainWindowViewModel : ViewModelBase
         CliRunnerService cliRunner,
         OutreachRepository repository,
         SessionStateStore sessionStateStore,
+        EpisodeTranscriptAcquisitionService transcriptAcquisitionService,
         TimeProvider timeProvider)
     {
         _cliRunner = cliRunner;
         _repository = repository;
         _sessionStateStore = sessionStateStore;
+        _transcriptAcquisitionService = transcriptAcquisitionService;
         _timeProvider = timeProvider;
 
         QueueItems = [];
@@ -944,6 +947,48 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         RunStatus = $"Unable to open episode link: {launchError}";
+    }
+
+    public async Task<TranscriptViewContent?> AcquireEpisodeTranscriptForViewingAsync(
+        QueueEpisode? episode,
+        bool hostOnly,
+        CancellationToken cancellationToken = default)
+    {
+        if (episode is null)
+        {
+            RunStatus = "Episode transcript is unavailable for this item.";
+            return null;
+        }
+
+        IsBusy = true;
+        try
+        {
+            RunStatus = hostOnly
+                ? $"Acquiring host-only transcript lines for '{episode.Title}'..."
+                : $"Acquiring transcript for '{episode.Title}'...";
+
+            var transcript = await _transcriptAcquisitionService.AcquireAsync(
+                episode,
+                SelectedQueueItem?.PodcastHosts ?? Array.Empty<string>(),
+                SelectedQueueItem?.FeedUrl,
+                hostOnly,
+                status => RunStatus = status,
+                cancellationToken);
+            if (transcript is null)
+            {
+                RunStatus = hostOnly
+                    ? "Host-only transcript lines are unavailable for this episode."
+                    : "Transcript is unavailable (no published transcript and automatic transcription did not return content).";
+                return null;
+            }
+
+            RunStatus = $"Opened {transcript.SourceLabel} for '{episode.Title}'.";
+            return transcript;
+        }
+        finally
+        {
+            IsBusy = false;
+        }
     }
 
     private static bool TryBuildRssViewerUri(Uri feedUri, out Uri viewerUri)

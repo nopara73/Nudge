@@ -82,6 +82,44 @@ public partial class MainWindow : Window
         viewModel.RunStatus = "Copied episode link to clipboard.";
     }
 
+    private async void ViewEpisodeTranscriptMenuItem_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        await OpenEpisodeTranscriptAsync(sender, hostOnly: false);
+    }
+
+    private async void ViewEpisodeHostOnlyTranscriptMenuItem_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        await OpenEpisodeTranscriptAsync(sender, hostOnly: true);
+    }
+
+    private async void ViewEpisodeTranscriptButton_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        await OpenEpisodeTranscriptAsync(sender, hostOnly: false);
+    }
+
+    private async Task OpenEpisodeTranscriptAsync(object? sender, bool hostOnly)
+    {
+        if (DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        if (sender is not Control { DataContext: QueueEpisode episode })
+        {
+            viewModel.RunStatus = "Episode transcript is unavailable for this item.";
+            return;
+        }
+
+        var transcript = await viewModel.AcquireEpisodeTranscriptForViewingAsync(episode, hostOnly);
+        if (transcript is null)
+        {
+            return;
+        }
+
+        var viewerWindow = new TranscriptViewerWindow(transcript.WindowTitle, transcript.Body);
+        await viewerWindow.ShowDialog(this);
+    }
+
     private async Task CopyTextToClipboardAsync(string value)
     {
         var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;

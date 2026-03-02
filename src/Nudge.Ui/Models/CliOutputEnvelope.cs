@@ -94,6 +94,18 @@ public sealed class CliOutputEpisode
     [JsonPropertyName("url")]
     public string? Url { get; init; }
 
+    [JsonPropertyName("audioUrl")]
+    public string? AudioUrl { get; init; }
+
     [JsonPropertyName("publishedAtUtc")]
     public DateTimeOffset? PublishedAtUtc { get; init; }
+
+    [JsonPropertyName("transcriptUrl")]
+    public string? TranscriptUrl { get; init; }
+
+    [JsonPropertyName("transcript")]
+    public string? Transcript { get; init; }
+
+    [JsonPropertyName("hostTranscriptLines")]
+    public List<string> HostTranscriptLines { get; init; } = [];
 }

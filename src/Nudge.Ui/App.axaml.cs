@@ -3,6 +3,7 @@ using Avalonia.Controls.ApplicationLifetimes;
 using Avalonia.Data.Core;
 using Avalonia.Data.Core.Plugins;
 using System;
+using System.Net.Http;
 using System.Linq;
 using Avalonia.Markup.Xaml;
 using Microsoft.Extensions.DependencyInjection;
@@ -58,6 +59,15 @@ public partial class App : Application
         services.AddSingleton<CliRunnerService>();
         services.AddSingleton<OutreachRepository>();
         services.AddSingleton<SessionStateStore>();
+        services.AddSingleton(new HttpClient { Timeout = TimeSpan.FromSeconds(20) });
+        services.AddSingleton<ILocalEpisodeSttTranscriber>(serviceProvider =>
+        {
+            var commandTemplate = Environment.GetEnvironmentVariable("NUDGE_STT_COMMAND_TEMPLATE");
+            return string.IsNullOrWhiteSpace(commandTemplate)
+                ? new NoOpLocalEpisodeSttTranscriber()
+                : new LocalEpisodeSttTranscriber(serviceProvider.GetRequiredService<HttpClient>());
+        });
+        services.AddSingleton<EpisodeTranscriptAcquisitionService>();
         services.AddTransient<MainWindowViewModel>();
         return services.BuildServiceProvider();
     }
