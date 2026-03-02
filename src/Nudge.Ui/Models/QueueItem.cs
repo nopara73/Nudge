@@ -45,17 +45,17 @@ public sealed class QueueItem
         {
             if (State == OutreachState.Snoozed && SnoozeUntilUtc is not null)
             {
-                return $"Snoozed until {SnoozeUntilUtc.Value.ToLocalTime():yyyy-MM-dd}";
+                return $"Snoozed for {FormatRemainingDuration(SnoozeUntilUtc.Value)}";
             }
 
             if (State == OutreachState.ContactedWaiting && CooldownUntilUtc is not null)
             {
-                return $"Cooldown until {CooldownUntilUtc.Value.ToLocalTime():yyyy-MM-dd}";
+                return $"Cooldown for {FormatRemainingDuration(CooldownUntilUtc.Value)}";
             }
 
             if (State == OutreachState.RepliedYes && CooldownUntilUtc is not null)
             {
-                return $"Follow-up due {CooldownUntilUtc.Value.ToLocalTime():yyyy-MM-dd}";
+                return $"Follow-up in {FormatRemainingDuration(CooldownUntilUtc.Value)}";
             }
 
             return string.Empty;
@@ -63,4 +63,76 @@ public sealed class QueueItem
     }
 
     public bool HasWaitingUntilDisplay => !string.IsNullOrWhiteSpace(WaitingUntilDisplay);
+
+    private static string FormatRemainingDuration(DateTimeOffset targetUtc)
+    {
+        var nowLocal = DateTimeOffset.Now;
+        var targetLocal = targetUtc.ToLocalTime();
+
+        if (targetLocal <= nowLocal)
+        {
+            return "0 days";
+        }
+
+        var years = GetWholeYears(nowLocal, targetLocal);
+        if (years >= 1)
+        {
+            return FormatUnit(years, "year");
+        }
+
+        var months = GetWholeMonths(nowLocal, targetLocal);
+        if (months >= 1)
+        {
+            return FormatUnit(months, "month");
+        }
+
+        var remaining = targetLocal - nowLocal;
+        var weeks = (int)Math.Floor(remaining.TotalDays / 7);
+        if (weeks >= 1)
+        {
+            return FormatUnit(weeks, "week");
+        }
+
+        var days = (int)Math.Floor(remaining.TotalDays);
+        if (days >= 1)
+        {
+            return FormatUnit(days, "day");
+        }
+
+        var hours = (int)Math.Floor(remaining.TotalHours);
+        if (hours >= 1)
+        {
+            return FormatUnit(hours, "hour");
+        }
+
+        var minutes = (int)Math.Floor(remaining.TotalMinutes);
+        return FormatUnit(Math.Max(minutes, 1), "minute");
+    }
+
+    private static int GetWholeYears(DateTimeOffset start, DateTimeOffset end)
+    {
+        var years = end.Year - start.Year;
+        if (start.AddYears(years) > end)
+        {
+            years--;
+        }
+
+        return Math.Max(years, 0);
+    }
+
+    private static int GetWholeMonths(DateTimeOffset start, DateTimeOffset end)
+    {
+        var months = ((end.Year - start.Year) * 12) + (end.Month - start.Month);
+        if (start.AddMonths(months) > end)
+        {
+            months--;
+        }
+
+        return Math.Max(months, 0);
+    }
+
+    private static string FormatUnit(int value, string unit)
+    {
+        return value == 1 ? $"1 {unit}" : $"{value} {unit}s";
+    }
 }

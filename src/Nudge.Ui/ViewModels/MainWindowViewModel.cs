@@ -458,7 +458,7 @@ public partial class MainWindowViewModel : ViewModelBase
         IsBusy = true;
         try
         {
-            var profile = profileResult.Profile;
+            var profile = ExpandRunProfileForQueueCoverage(profileResult.Profile);
             RunStatus = "Running CLI...";
             var cliRun = await _cliRunner.RunAsync(profile);
             CommandPreview = cliRun.CommandPreview;
@@ -1209,6 +1209,23 @@ public partial class MainWindowViewModel : ViewModelBase
     private static bool TryParseTop(string rawTop, out int top)
     {
         return int.TryParse(rawTop?.Trim(), out top) && top > 0;
+    }
+
+    private RunConfigProfile ExpandRunProfileForQueueCoverage(RunConfigProfile baseProfile)
+    {
+        var nonActionableCount = QueueItems.Count(item => GetQueueBucketForItem(item) != QueueBucket.Actionable);
+        if (nonActionableCount <= 0)
+        {
+            return baseProfile;
+        }
+
+        var expandedTop = baseProfile.Top + nonActionableCount;
+        if (expandedTop < baseProfile.Top)
+        {
+            expandedTop = int.MaxValue;
+        }
+
+        return baseProfile with { Top = expandedTop };
     }
 
     private void RefreshSelectedTargetComputedState()
