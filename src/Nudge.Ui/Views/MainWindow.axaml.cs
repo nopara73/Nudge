@@ -1,6 +1,8 @@
 using Avalonia;
 using Avalonia.Controls;
 using System;
+using Nudge.Ui.Models;
+using Nudge.Ui.ViewModels;
 
 namespace Nudge.Ui.Views;
 
@@ -44,6 +46,49 @@ public partial class MainWindow : Window
         Position = new PixelPoint(
             targetX,
             targetY);
+    }
+
+    private async void CopyFeedLinkMenuItem_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        if (viewModel.SelectedQueueItem is null || string.IsNullOrWhiteSpace(viewModel.SelectedQueueItem.FeedUrl))
+        {
+            viewModel.RunStatus = "Feed URL is unavailable for this item.";
+            return;
+        }
+
+        await CopyTextToClipboardAsync(viewModel.SelectedQueueItem.FeedUrl);
+        viewModel.RunStatus = "Copied feed link to clipboard.";
+    }
+
+    private async void CopyEpisodeLinkMenuItem_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    {
+        if (DataContext is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        if (sender is not MenuItem { DataContext: QueueEpisode episode } || string.IsNullOrWhiteSpace(episode.Url))
+        {
+            viewModel.RunStatus = "Episode link is unavailable for this item.";
+            return;
+        }
+
+        await CopyTextToClipboardAsync(episode.Url);
+        viewModel.RunStatus = "Copied episode link to clipboard.";
+    }
+
+    private async Task CopyTextToClipboardAsync(string value)
+    {
+        var clipboard = TopLevel.GetTopLevel(this)?.Clipboard;
+        if (clipboard is not null)
+        {
+            await clipboard.SetTextAsync(value);
+        }
     }
 
 }

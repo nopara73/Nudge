@@ -310,7 +310,14 @@
                                                 Foreground="#1D4ED8"
                                                 FontWeight="SemiBold"
                                                 ToolTip.Tip="{Binding SelectedFeedUrl}"
-                                                Command="{Binding OpenFeedUrlCommand}" />
+                                                Command="{Binding OpenFeedUrlCommand}">
+                                            <Button.ContextMenu>
+                                                <ContextMenu>
+                                                    <MenuItem Header="Copy link"
+                                                              Click="CopyFeedLinkMenuItem_OnClick" />
+                                                </ContextMenu>
+                                            </Button.ContextMenu>
+                                        </Button>
                                     </StackPanel>
                                 </Border>
 
@@ -381,7 +388,14 @@
                                                             Command="{ReflectionBinding $parent[Window].DataContext.OpenEpisodeCommand}"
                                                             CommandParameter="{Binding .}"
                                                             IsVisible="{Binding HasUrl}"
-                                                            Content="{Binding Title}" />
+                                                            Content="{Binding Title}">
+                                                        <Button.ContextMenu>
+                                                            <ContextMenu>
+                                                                <MenuItem Header="Copy link"
+                                                                          Click="CopyEpisodeLinkMenuItem_OnClick" />
+                                                            </ContextMenu>
+                                                        </Button.ContextMenu>
+                                                    </Button>
                                                     <TextBlock Grid.Column="2"
                                                                Text="{Binding Title}"
                                                                Foreground="#111827"
