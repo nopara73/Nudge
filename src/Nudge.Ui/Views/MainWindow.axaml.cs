@@ -92,9 +92,37 @@ public partial class MainWindow : Window
         await OpenEpisodeTranscriptAsync(sender, hostOnly: true);
     }
 
-    private async void ViewEpisodeTranscriptButton_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
+    private void ShowTranscriptOptionsButton_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
-        await OpenEpisodeTranscriptAsync(sender, hostOnly: false);
+        if (sender is not Button { DataContext: QueueEpisode episode } button)
+        {
+            return;
+        }
+
+        var fullTranscriptMenuItem = new MenuItem
+        {
+            Header = "Full transcript",
+            DataContext = episode
+        };
+        fullTranscriptMenuItem.Click += ViewEpisodeTranscriptMenuItem_OnClick;
+
+        var hostOnlyTranscriptMenuItem = new MenuItem
+        {
+            Header = "Host-only lines",
+            DataContext = episode
+        };
+        hostOnlyTranscriptMenuItem.Click += ViewEpisodeHostOnlyTranscriptMenuItem_OnClick;
+
+        var chooserMenu = new ContextMenu
+        {
+            ItemsSource = new[]
+            {
+                fullTranscriptMenuItem,
+                hostOnlyTranscriptMenuItem
+            }
+        };
+
+        chooserMenu.Open(button);
     }
 
     private async Task OpenEpisodeTranscriptAsync(object? sender, bool hostOnly)
