@@ -48,7 +48,17 @@ public partial class MainWindowViewModel : ViewModelBase
         "strength after 40",
         "hyrox",
         "crossfit masters",
-        "vo2 max aging"
+        "vo2 max aging",
+        "longevity",
+        "reverse aging",
+        "biological age",
+        "aging clock",
+        "pheno age",
+        "rejuvenation",
+        "rejuvenation olympics",
+        "longevity world cup",
+        "dave pascoe",
+        "bryan johnson"
     ];
 
     private readonly CliRunnerService _cliRunner;

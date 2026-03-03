@@ -41,6 +41,12 @@ public sealed partial class EpisodeTranscriptAcquisitionService
                 reportProgress?.Invoke("Downloading transcript from feed...");
                 transcriptText = await DownloadTranscriptTextAsync(feedMetadata.TranscriptUrl!, cancellationToken);
             }
+
+            if (string.IsNullOrWhiteSpace(transcriptText) && !string.IsNullOrWhiteSpace(feedMetadata?.ShowNotesFallback))
+            {
+                reportProgress?.Invoke("No transcript URL in feed. Using published show notes as fallback text...");
+                transcriptText = feedMetadata.ShowNotesFallback;
+            }
         }
 
         if (string.IsNullOrWhiteSpace(transcriptText))
@@ -198,7 +204,8 @@ public sealed partial class EpisodeTranscriptAcquisitionService
             return new FeedEpisodeMetadata(
                 ExtractTranscriptUrl(matchingItem),
                 ExtractEpisodeUrl(matchingItem),
-                matchingItem.Element("enclosure")?.Attribute("url")?.Value?.Trim());
+                matchingItem.Element("enclosure")?.Attribute("url")?.Value?.Trim(),
+                ExtractShowNotesFallback(matchingItem));
         }
         catch
         {
@@ -268,6 +275,31 @@ public sealed partial class EpisodeTranscriptAcquisitionService
             .Select(element => element.Attribute("href")?.Value?.Trim())
             .FirstOrDefault(value => !string.IsNullOrWhiteSpace(value));
         return string.IsNullOrWhiteSpace(atomLinkHref) ? null : atomLinkHref;
+    }
+
+    private static string? ExtractShowNotesFallback(XElement item)
+    {
+        var contentEncoded = item
+            .Elements()
+            .FirstOrDefault(element => string.Equals(element.Name.LocalName, "encoded", StringComparison.OrdinalIgnoreCase))
+            ?.Value;
+        var description = item.Element("description")?.Value;
+
+        foreach (var candidate in new[] { contentEncoded, description })
+        {
+            if (string.IsNullOrWhiteSpace(candidate))
+            {
+                continue;
+            }
+
+            var normalized = NormalizeHtmlText(candidate);
+            if (normalized.Length >= 160)
+            {
+                return normalized;
+            }
+        }
+
+        return null;
     }
 
     private async Task<string?> TryResolveTranscriptFromEpisodePageAsync(string episodeUrl, CancellationToken cancellationToken)
@@ -772,5 +804,9 @@ public sealed partial class EpisodeTranscriptAcquisitionService
     [GeneratedRegex(@"\s+", RegexOptions.Compiled)]
     private static partial Regex WhitespaceRegex();
 
-    private sealed record FeedEpisodeMetadata(string? TranscriptUrl, string? EpisodeUrl, string? AudioUrl);
+    private sealed record FeedEpisodeMetadata(
+        string? TranscriptUrl,
+        string? EpisodeUrl,
+        string? AudioUrl,
+        string? ShowNotesFallback);
 }

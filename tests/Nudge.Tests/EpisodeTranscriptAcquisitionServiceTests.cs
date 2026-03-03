@@ -208,6 +208,52 @@ public sealed class EpisodeTranscriptAcquisitionServiceTests
     }
 
     [Fact]
+    public async Task AcquireAsync_UsesFeedShowNotesFallback_WhenTranscriptMetadataMissing()
+    {
+        const string feedUrl = "https://example.com/feed.xml";
+        var handler = new StubHttpMessageHandler(request =>
+        {
+            if (request.RequestUri?.ToString() == feedUrl)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        <rss version="2.0" xmlns:content="http://purl.org/rss/1.0/modules/content/">
+                          <channel>
+                            <item>
+                              <title>Episode 1</title>
+                              <link>https://example.com/ep-1</link>
+                              <content:encoded><![CDATA[
+                                <p>Host A and Host B discuss practical programming strategies, review common mistakes,
+                                and share step-by-step implementation examples that listeners can apply this week.</p>
+                              ]]></content:encoded>
+                            </item>
+                          </channel>
+                        </rss>
+                        """)
+                };
+            }
+
+            return new HttpResponseMessage(HttpStatusCode.NotFound);
+        });
+        var service = new EpisodeTranscriptAcquisitionService(
+            new HttpClient(handler),
+            new StubEpisodeSttTranscriber(null));
+        var episode = new QueueEpisode
+        {
+            Title = "Episode 1",
+            Url = "https://example.com/ep-1"
+        };
+
+        var result = await service.AcquireAsync(episode, ["Host"], feedUrl, hostOnly: false);
+
+        Assert.NotNull(result);
+        Assert.Contains("discuss practical programming strategies", result!.Body);
+        Assert.Contains("step-by-step implementation examples", result.Body);
+    }
+
+    [Fact]
     public async Task AcquireAsync_UsesEpisodePageTranscriptLinkFallback_WhenFeedAndSttMiss()
     {
         const string episodeUrl = "https://example.com/ep-1";
