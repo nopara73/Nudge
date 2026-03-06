@@ -13,8 +13,63 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
     private const string SearchPath = "graphql";
     private const string UserAgent = "Nudge-Podcast-Bot/1.0";
     private const int MaxResults = 50;
+    private const int LowCostMaxResults = 10;
+    private const int MaxPages = 20;
+    private const int MaxCandidateResults = 500;
+    private const int FirstPageIndex = 0;
+    private const string SearchPodcastsQuery =
+        """
+        query SearchPodcasts($searchTerm: String, $first: Int!, $page: Int!) {
+          podcasts(searchTerm: $searchTerm, first: $first, page: $page) {
+            data {
+              id
+              title
+              description
+              language
+              rssUrl
+              audienceEstimate
+              episodeAudienceEstimate {
+                from
+                to
+              }
+              powerScore
+              socialFollowerCounts {
+                youtube
+                twitter
+                instagram
+                linkedin
+                tiktok
+                facebook
+                patreon
+                twitch
+              }
+            }
+          }
+        }
+        """;
+    private const string SearchPodcastsLegacyQuery =
+        """
+        query SearchPodcasts($searchTerm: String, $first: Int!, $page: Int!) {
+          podcasts(searchTerm: $searchTerm, first: $first, page: $page) {
+            data {
+              id
+              title
+              description
+              language
+              rssUrl
+              audienceEstimate
+              powerScore
+            }
+          }
+        }
+        """;
     private readonly HttpClient _httpClient = httpClient;
     private readonly NudgeOptions _options = options;
+    private int _pointBudgetExceeded;
+    private int _tokenRejected;
+
+    public bool WasPointBudgetExceeded => Volatile.Read(ref _pointBudgetExceeded) == 1;
+    public bool WasTokenRejected => Volatile.Read(ref _tokenRejected) == 1;
 
     public async Task<IReadOnlyList<PodcastSearchResult>> SearchAsync(
         IReadOnlyList<string> keywords,
@@ -39,40 +94,314 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         IReadOnlyList<string> keywords,
         CancellationToken cancellationToken)
     {
+        var terms = keywords
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Select(k => k.Trim())
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (terms.Length == 0)
+        {
+            terms = [string.Empty];
+        }
+        // #region agent log
+        WriteDebugLog(
+            hypothesisId: "H2_page_start_or_empty_terms",
+            location: "ListenNotesPodcastSearchClient.cs:SearchWithRetryAsync",
+            message: "Prepared deduplicated search terms.",
+            data: new
+            {
+                rawKeywordsCount = keywords.Count,
+                dedupedTermsCount = terms.Length,
+                firstTerm = terms[0],
+                firstPageIndex = FirstPageIndex
+            },
+            runId: "initial");
+        // #endregion
+
+        var accumulated = new List<PodcastSearchResult>(MaxCandidateResults);
+        var seenIds = new HashSet<string>(StringComparer.Ordinal);
+        var includeExtendedSignals = true;
+        foreach (var term in terms)
+        {
+            var (termResults, switchedToLegacy) = await SearchTermWithPagingAsync(
+                term,
+                includeExtendedSignals,
+                cancellationToken);
+            // #region agent log
+            WriteDebugLogB9(
+                hypothesisId: "H1_search_broad_term_matching",
+                location: "ListenNotesPodcastSearchClient.cs:SearchWithRetryAsync",
+                message: "Completed search term aggregation before dedupe merge.",
+                data: new
+                {
+                    term,
+                    termResultsCount = termResults.Count,
+                    sampleShowNames = termResults
+                        .Take(5)
+                        .Select(r => r.Name)
+                        .ToArray()
+                },
+                runId: "initial");
+            // #endregion
+            if (switchedToLegacy)
+            {
+                includeExtendedSignals = false;
+            }
+
+            foreach (var result in termResults)
+            {
+                if (!seenIds.Add(result.Id))
+                {
+                    continue;
+                }
+
+                accumulated.Add(result);
+                if (accumulated.Count >= MaxCandidateResults)
+                {
+                    return accumulated;
+                }
+            }
+        }
+
+        return accumulated;
+    }
+
+    private async Task<(IReadOnlyList<PodcastSearchResult> Results, bool SwitchedToLegacy)> SearchTermWithPagingAsync(
+        string searchTerm,
+        bool includeExtendedSignals,
+        CancellationToken cancellationToken)
+    {
+        var termResults = new List<PodcastSearchResult>();
+        var seenTermIds = new HashSet<string>(StringComparer.Ordinal);
+        var switchedToLegacy = false;
+        var pageSize = MaxResults;
+        var page = FirstPageIndex;
+        while (page < FirstPageIndex + MaxPages)
+        {
+            var (mapped, sourceItemCount, shouldRetryWithLegacyQuery, shouldRetryAttempt, shouldRetryWithLowerPageSize) = await ExecuteSearchAsync(
+                searchTerm,
+                includeExtendedSignals,
+                page,
+                pageSize,
+                cancellationToken);
+
+            if (shouldRetryWithLegacyQuery && includeExtendedSignals)
+            {
+                // #region agent log
+                WriteDebugLog(
+                    hypothesisId: "H3_legacy_fallback",
+                    location: "ListenNotesPodcastSearchClient.cs:SearchTermWithPagingAsync",
+                    message: "Switching to legacy query after GraphQL errors.",
+                    data: new { searchTerm, page, includeExtendedSignalsBeforeSwitch = true },
+                    runId: "initial");
+                // #endregion
+                includeExtendedSignals = false;
+                switchedToLegacy = true;
+                termResults.Clear();
+                seenTermIds.Clear();
+                page = FirstPageIndex;
+                continue;
+            }
+
+            if (shouldRetryAttempt)
+            {
+                continue;
+            }
+
+            if (shouldRetryWithLowerPageSize && pageSize > LowCostMaxResults)
+            {
+                // #region agent log
+                WriteDebugLog(
+                    hypothesisId: "H6_budget_fallback",
+                    location: "ListenNotesPodcastSearchClient.cs:SearchTermWithPagingAsync",
+                    message: "Lowering page size after API points budget response.",
+                    data: new { searchTerm, previousPageSize = pageSize, newPageSize = LowCostMaxResults },
+                    runId: "initial");
+                // #endregion
+                pageSize = LowCostMaxResults;
+                termResults.Clear();
+                seenTermIds.Clear();
+                page = FirstPageIndex;
+                continue;
+            }
+
+            foreach (var result in mapped)
+            {
+                if (seenTermIds.Add(result.Id))
+                {
+                    termResults.Add(result);
+                }
+            }
+
+            if (sourceItemCount < pageSize || termResults.Count >= MaxCandidateResults)
+            {
+                // #region agent log
+                WriteDebugLog(
+                    hypothesisId: "H5_pagination_break",
+                    location: "ListenNotesPodcastSearchClient.cs:SearchTermWithPagingAsync",
+                    message: "Pagination loop break condition reached.",
+                    data: new
+                    {
+                        searchTerm,
+                        page,
+                        pageSize,
+                        sourceItemCount,
+                        mappedCount = mapped.Count,
+                        termResultsCount = termResults.Count,
+                        maxResults = MaxResults
+                    },
+                    runId: "initial");
+                // #endregion
+                break;
+            }
+
+            page++;
+        }
+
+        return (termResults, switchedToLegacy);
+    }
+
+    private async Task<(IReadOnlyList<PodcastSearchResult> Results, int SourceItemCount, bool ShouldRetryWithLegacyQuery, bool ShouldRetryAttempt, bool ShouldRetryWithLowerPageSize)> ExecuteSearchAsync(
+        string searchTerm,
+        bool includeExtendedSignals,
+        int page,
+        int pageSize,
+        CancellationToken cancellationToken)
+    {
         for (var attempt = 0; attempt < 2; attempt++)
         {
-            using var request = BuildRequest(keywords);
+            using var request = BuildRequest(searchTerm, includeExtendedSignals, page, pageSize);
             try
             {
                 using var response = await _httpClient.SendAsync(request, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
                     var content = await response.Content.ReadAsStringAsync(cancellationToken);
-                    var mapped = MapResults(content);
-                    return mapped;
+                    var (mapped, sourceItemCount) = MapResults(content);
+                    var shouldRetryWithLegacyQuery = includeExtendedSignals && HasGraphQlErrors(content);
+                    // #region agent log
+                    WriteDebugLog(
+                        hypothesisId: "H2_H3_H4_mapping",
+                        location: "ListenNotesPodcastSearchClient.cs:ExecuteSearchAsync",
+                        message: "GraphQL search response processed.",
+                        data: new
+                        {
+                            searchTerm,
+                            includeExtendedSignals,
+                            page,
+                            pageSize,
+                            statusCode = (int)response.StatusCode,
+                            sourceItemCount,
+                            mappedCount = mapped.Count,
+                            shouldRetryWithLegacyQuery
+                        },
+                        runId: "initial");
+                    // #endregion
+                    return (mapped, sourceItemCount, shouldRetryWithLegacyQuery, false, false);
                 }
 
                 if (attempt == 0 && IsTransientStatusCode(response.StatusCode))
                 {
+                    // #region agent log
+                    WriteDebugLog(
+                        hypothesisId: "H2_H3_http_status",
+                        location: "ListenNotesPodcastSearchClient.cs:ExecuteSearchAsync",
+                        message: "Transient status encountered, retrying request.",
+                        data: new
+                        {
+                            searchTerm,
+                            includeExtendedSignals,
+                            page,
+                            pageSize,
+                            statusCode = (int)response.StatusCode,
+                            attempt
+                        },
+                        runId: "initial");
+                    // #endregion
                     await DelayForRetryAsync(response, cancellationToken);
                     continue;
                 }
 
-                return Array.Empty<PodcastSearchResult>();
+                // #region agent log
+                var errorBody = response.Content is null
+                    ? string.Empty
+                    : await response.Content.ReadAsStringAsync(cancellationToken);
+                var pointsExceeded = IsPointBudgetExceeded(response.StatusCode, errorBody);
+                var tokenRejected = IsTokenRejectedStatusCode(response.StatusCode);
+                if (pointsExceeded)
+                {
+                    Interlocked.Exchange(ref _pointBudgetExceeded, 1);
+                }
+                if (tokenRejected)
+                {
+                    Interlocked.Exchange(ref _tokenRejected, 1);
+                }
+                WriteDebugLog(
+                    hypothesisId: "H2_H3_http_status",
+                    location: "ListenNotesPodcastSearchClient.cs:ExecuteSearchAsync",
+                    message: "Non-success status returned without retry.",
+                    data: new
+                    {
+                        searchTerm,
+                        includeExtendedSignals,
+                        page,
+                        pageSize,
+                        statusCode = (int)response.StatusCode,
+                        attempt,
+                        pointsExceeded,
+                        tokenRejected,
+                        errorBodySnippet = errorBody.Length > 400 ? errorBody[..400] : errorBody
+                    },
+                    runId: "initial");
+                // #endregion
+                if (pointsExceeded && includeExtendedSignals)
+                {
+                    return (Array.Empty<PodcastSearchResult>(), 0, true, false, false);
+                }
+
+                if (pointsExceeded && pageSize > LowCostMaxResults)
+                {
+                    return (Array.Empty<PodcastSearchResult>(), 0, false, false, true);
+                }
+
+                return (Array.Empty<PodcastSearchResult>(), 0, false, false, false);
             }
             catch (Exception ex) when (attempt == 0 && IsTransientException(ex, cancellationToken))
             {
+                // #region agent log
+                WriteDebugLog(
+                    hypothesisId: "H2_H3_http_status",
+                    location: "ListenNotesPodcastSearchClient.cs:ExecuteSearchAsync",
+                    message: "Transient exception encountered, retrying request.",
+                    data: new
+                    {
+                        searchTerm,
+                        includeExtendedSignals,
+                        page,
+                        pageSize,
+                        attempt,
+                        exceptionType = ex.GetType().Name
+                    },
+                    runId: "initial");
+                // #endregion
                 await DelayForRetryAsync(null, cancellationToken);
             }
         }
 
-        return Array.Empty<PodcastSearchResult>();
+        // #region agent log
+        WriteDebugLog(
+            hypothesisId: "H2_H3_http_status",
+            location: "ListenNotesPodcastSearchClient.cs:ExecuteSearchAsync",
+            message: "Retries exhausted; returning empty with retry marker.",
+            data: new { searchTerm, includeExtendedSignals, page, pageSize },
+            runId: "initial");
+        // #endregion
+        return (Array.Empty<PodcastSearchResult>(), 0, false, true, false);
     }
 
-    private HttpRequestMessage BuildRequest(IReadOnlyList<string> keywords)
+    private HttpRequestMessage BuildRequest(string searchTerm, bool includeExtendedSignals, int page, int pageSize)
     {
-        var searchTerm = string.Join(' ', keywords.Where(k => !string.IsNullOrWhiteSpace(k)).Select(k => k.Trim()));
-        var payload = BuildGraphQlPayload(searchTerm);
+        var payload = BuildGraphQlPayload(searchTerm, includeExtendedSignals, page, pageSize);
 
         var request = new HttpRequestMessage(HttpMethod.Post, SearchPath);
         request.Headers.UserAgent.Clear();
@@ -88,24 +417,9 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         return request;
     }
 
-    private static string BuildGraphQlPayload(string searchTerm)
+    private static string BuildGraphQlPayload(string searchTerm, bool includeExtendedSignals, int page, int pageSize)
     {
-        var query =
-            """
-            query SearchPodcasts($searchTerm: String, $first: Int!) {
-              podcasts(searchTerm: $searchTerm, first: $first) {
-                data {
-                  id
-                  title
-                  description
-                  language
-                  rssUrl
-                  audienceEstimate
-                  powerScore
-                }
-              }
-            }
-            """;
+        var query = includeExtendedSignals ? SearchPodcastsQuery : SearchPodcastsLegacyQuery;
 
         var payload = new
         {
@@ -113,11 +427,32 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
             variables = new
             {
                 searchTerm = string.IsNullOrWhiteSpace(searchTerm) ? null : searchTerm,
-                first = MaxResults
+                first = pageSize,
+                page
             }
         };
 
         return JsonSerializer.Serialize(payload);
+    }
+
+    private static bool HasGraphQlErrors(string payload)
+    {
+        if (string.IsNullOrWhiteSpace(payload))
+        {
+            return false;
+        }
+
+        try
+        {
+            using var document = JsonDocument.Parse(payload);
+            return TryGetPropertyIgnoreCase(document.RootElement, "errors", out var errorsNode) &&
+                   errorsNode.ValueKind == JsonValueKind.Array &&
+                   errorsNode.GetArrayLength() > 0;
+        }
+        catch (JsonException)
+        {
+            return false;
+        }
     }
 
     private static bool IsTransientException(Exception exception, CancellationToken cancellationToken)
@@ -135,6 +470,17 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         return statusCode == HttpStatusCode.TooManyRequests || (int)statusCode >= 500;
     }
 
+    private static bool IsPointBudgetExceeded(HttpStatusCode statusCode, string body)
+    {
+        return statusCode == HttpStatusCode.BadRequest &&
+               body.Contains("exceed your remaining points", StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool IsTokenRejectedStatusCode(HttpStatusCode statusCode)
+    {
+        return statusCode is HttpStatusCode.Unauthorized or HttpStatusCode.Forbidden;
+    }
+
     private static async Task DelayForRetryAsync(HttpResponseMessage? response, CancellationToken cancellationToken)
     {
         var delay = TimeSpan.FromMilliseconds(200);
@@ -149,17 +495,17 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         await Task.Delay(delay, cancellationToken);
     }
 
-    private static IReadOnlyList<PodcastSearchResult> MapResults(string payload)
+    private static (IReadOnlyList<PodcastSearchResult> Results, int SourceItemCount) MapResults(string payload)
     {
         if (string.IsNullOrWhiteSpace(payload))
         {
-            return Array.Empty<PodcastSearchResult>();
+            return (Array.Empty<PodcastSearchResult>(), 0);
         }
 
         try
         {
             using var document = JsonDocument.Parse(payload);
-            var sourceItems = ExtractPodcastItems(document.RootElement);
+            var sourceItems = ExtractPodcastItems(document.RootElement).ToArray();
             var mapped = sourceItems
                 .Select(TryMapPodcast)
                 .Where(static mappedItem => mappedItem is not null)
@@ -167,11 +513,11 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
                 .DistinctBy(static r => r.Id, StringComparer.Ordinal)
                 .ToArray();
 
-            return mapped;
+            return (mapped, sourceItems.Length);
         }
         catch (JsonException)
         {
-            return Array.Empty<PodcastSearchResult>();
+            return (Array.Empty<PodcastSearchResult>(), 0);
         }
     }
 
@@ -252,9 +598,17 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         var language = TryGetString(item, "language", out var itemLanguage)
             ? itemLanguage
             : TryGetString(item, "languageCode", out var itemLanguageCode) ? itemLanguageCode : null;
+        var episodeAudienceMidpoint = TryGetRangeMidpoint(item, "episodeAudienceEstimate", out var midpoint)
+            ? (double?)midpoint
+            : null;
+        var socialFollowerCount = TryGetFollowerCount(item, out var followerCount)
+            ? (double?)followerCount
+            : null;
         var estimatedReach = NormalizeReach(
             TryGetDouble(item, "audienceEstimate", out var audienceEstimate) ? audienceEstimate : null,
-            TryGetDouble(item, "powerScore", out var powerScore) ? powerScore : null);
+            TryGetDouble(item, "powerScore", out var powerScore) ? powerScore : null,
+            episodeAudienceMidpoint,
+            socialFollowerCount);
 
         return new PodcastSearchResult
         {
@@ -267,20 +621,140 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         };
     }
 
-    private static double NormalizeReach(double? audienceEstimate, double? powerScore)
+    private static double NormalizeReach(
+        double? audienceEstimate,
+        double? powerScore,
+        double? episodeAudienceMidpoint,
+        double? socialFollowerCount)
     {
+        var weightedValue = 0.0;
+        var weightTotal = 0.0;
+
         if (audienceEstimate.HasValue && audienceEstimate.Value > 0)
         {
-            var normalizedFromAudience = Math.Log10(audienceEstimate.Value + 1) / 7.0;
-            return Math.Clamp(normalizedFromAudience, 0.0, 1.0);
+            var normalizedFromAudience = NormalizeAudienceLikeSignal(audienceEstimate.Value);
+            weightedValue += normalizedFromAudience * 0.55;
+            weightTotal += 0.55;
         }
 
         if (powerScore.HasValue)
         {
-            return Math.Clamp(powerScore.Value / 100.0, 0.0, 1.0);
+            var normalizedFromPowerScore = Math.Clamp(powerScore.Value / 100.0, 0.0, 1.0);
+            weightedValue += normalizedFromPowerScore * 0.20;
+            weightTotal += 0.20;
         }
 
-        return 0.5;
+        if (episodeAudienceMidpoint.HasValue && episodeAudienceMidpoint.Value > 0)
+        {
+            var normalizedFromEpisodeAudience = NormalizeAudienceLikeSignal(episodeAudienceMidpoint.Value);
+            weightedValue += normalizedFromEpisodeAudience * 0.20;
+            weightTotal += 0.20;
+        }
+
+        if (socialFollowerCount.HasValue && socialFollowerCount.Value > 0)
+        {
+            var normalizedFromSocialFollowers = Math.Clamp(Math.Log10(socialFollowerCount.Value + 1) / 7.0, 0.0, 1.0);
+            weightedValue += normalizedFromSocialFollowers * 0.05;
+            weightTotal += 0.05;
+        }
+
+        if (weightTotal > 0)
+        {
+            var blendedReach = Math.Clamp(weightedValue / weightTotal, 0.0, 1.0);
+            if (TryNormalizeLegacyReach(audienceEstimate, powerScore, out var legacyReach))
+            {
+                var delta = Math.Abs(blendedReach - legacyReach);
+                if (delta > 0.30)
+                {
+                    // Guardrail against sharp shifts if extended metrics are noisy or sparse.
+                    blendedReach = Math.Clamp((blendedReach * 0.65) + (legacyReach * 0.35), 0.0, 1.0);
+                }
+            }
+
+            return blendedReach;
+        }
+
+        return 0.2;
+    }
+
+    private static bool TryNormalizeLegacyReach(double? audienceEstimate, double? powerScore, out double value)
+    {
+        if (audienceEstimate.HasValue && audienceEstimate.Value > 0)
+        {
+            value = NormalizeAudienceLikeSignal(audienceEstimate.Value);
+            return true;
+        }
+
+        if (powerScore.HasValue)
+        {
+            value = Math.Clamp(powerScore.Value / 100.0, 0.0, 1.0);
+            return true;
+        }
+
+        value = 0;
+        return false;
+    }
+
+    private static double NormalizeAudienceLikeSignal(double value)
+    {
+        return Math.Clamp(Math.Log10(value + 1) / 7.0, 0.0, 1.0);
+    }
+
+    private static bool TryGetRangeMidpoint(JsonElement node, string propertyName, out double value)
+    {
+        value = 0;
+        if (!TryGetPropertyIgnoreCase(node, propertyName, out var property) ||
+            property.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var hasFrom = TryGetDouble(property, "from", out var from);
+        var hasTo = TryGetDouble(property, "to", out var to);
+        if (!hasFrom && !hasTo)
+        {
+            return false;
+        }
+
+        if (hasFrom && hasTo)
+        {
+            value = (from + to) / 2.0;
+            return true;
+        }
+
+        value = hasFrom ? from : to;
+        return true;
+    }
+
+    private static bool TryGetFollowerCount(JsonElement node, out double value)
+    {
+        value = 0;
+        if (!TryGetPropertyIgnoreCase(node, "socialFollowerCounts", out var followerCountsNode) ||
+            followerCountsNode.ValueKind != JsonValueKind.Object)
+        {
+            return false;
+        }
+
+        var total = 0.0;
+        var hasAnyValue = false;
+        foreach (var property in followerCountsNode.EnumerateObject())
+        {
+            if (!TryGetDouble(followerCountsNode, property.Name, out var followerCount) || followerCount <= 0)
+            {
+                continue;
+            }
+
+            total += followerCount;
+            hasAnyValue = true;
+        }
+
+        if (!hasAnyValue)
+        {
+            return false;
+        }
+
+        value = total;
+        return true;
     }
 
     private static bool TryGetString(JsonElement node, string propertyName, out string value)
@@ -339,5 +813,49 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
 
         value = default;
         return false;
+    }
+
+    private static void WriteDebugLog(string hypothesisId, string location, string message, object data, string runId)
+    {
+        try
+        {
+            var entry = new
+            {
+                sessionId = "8d2ec3",
+                runId,
+                hypothesisId,
+                location,
+                message,
+                data,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            };
+            File.AppendAllText("debug-8d2ec3.log", JsonSerializer.Serialize(entry) + Environment.NewLine);
+        }
+        catch
+        {
+            // Debug logging should never break client execution.
+        }
+    }
+
+    private static void WriteDebugLogB9(string hypothesisId, string location, string message, object data, string runId)
+    {
+        try
+        {
+            var entry = new
+            {
+                sessionId = "b9cf3d",
+                runId,
+                hypothesisId,
+                location,
+                message,
+                data,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            };
+            File.AppendAllText("debug-b9cf3d.log", JsonSerializer.Serialize(entry) + Environment.NewLine);
+        }
+        catch
+        {
+            // Debug logging should never break client execution.
+        }
     }
 }

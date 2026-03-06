@@ -1,5 +1,6 @@
 using System.Collections.ObjectModel;
 using System.Diagnostics;
+using System.Globalization;
 using System.IO;
 using System.Linq;
 using System.Runtime.Versioning;
@@ -18,6 +19,8 @@ public partial class MainWindowViewModel : ViewModelBase
     private const string RssViewerBaseUrl = "https://rssrdr.com/?rss=";
     private const int DefaultPublishedAfterDays = 60;
     private const int DefaultTop = 3;
+    private const double DefaultMinReachPercent = 0;
+    private const double DefaultMaxReachPercent = 100;
     private const int RecentEpisodeDisplayLimit = 7;
     private static readonly IReadOnlyList<SnoozePresetOption> DefaultSnoozePresets =
     [
@@ -109,6 +112,12 @@ public partial class MainWindowViewModel : ViewModelBase
         RunTop = string.IsNullOrWhiteSpace(session.RunTop)
             ? DefaultTop.ToString()
             : session.RunTop;
+        RunMinReach = string.IsNullOrWhiteSpace(session.RunMinReach)
+            ? DefaultMinReachPercent.ToString("0", CultureInfo.InvariantCulture)
+            : session.RunMinReach;
+        RunMaxReach = string.IsNullOrWhiteSpace(session.RunMaxReach)
+            ? DefaultMaxReachPercent.ToString("0", CultureInfo.InvariantCulture)
+            : session.RunMaxReach;
         EvaluateRunConfigurationState();
         _ = LoadInitialDataAsync();
     }
@@ -144,6 +153,14 @@ public partial class MainWindowViewModel : ViewModelBase
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
     private string runTop = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
+    private string runMinReach = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
+    private string runMaxReach = string.Empty;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
@@ -474,6 +491,18 @@ public partial class MainWindowViewModel : ViewModelBase
         PersistSession();
     }
 
+    partial void OnRunMinReachChanged(string value)
+    {
+        EvaluateRunConfigurationState();
+        PersistSession();
+    }
+
+    partial void OnRunMaxReachChanged(string value)
+    {
+        EvaluateRunConfigurationState();
+        PersistSession();
+    }
+
     [RelayCommand]
     private async Task RunFromConfigAsync()
     {
@@ -527,6 +556,8 @@ public partial class MainWindowViewModel : ViewModelBase
         RunKeywords = string.Join(", ", DefaultRunKeywords);
         PublishedAfterDays = DefaultPublishedAfterDays.ToString();
         RunTop = DefaultTop.ToString();
+        RunMinReach = DefaultMinReachPercent.ToString("0", CultureInfo.InvariantCulture);
+        RunMaxReach = DefaultMaxReachPercent.ToString("0", CultureInfo.InvariantCulture);
         RunStatus = "Run settings reset to defaults.";
     }
 
@@ -577,6 +608,8 @@ public partial class MainWindowViewModel : ViewModelBase
             RunKeywords = string.Join(", ", DefaultRunKeywords);
             PublishedAfterDays = DefaultPublishedAfterDays.ToString();
             RunTop = DefaultTop.ToString();
+            RunMinReach = DefaultMinReachPercent.ToString("0", CultureInfo.InvariantCulture);
+            RunMaxReach = DefaultMaxReachPercent.ToString("0", CultureInfo.InvariantCulture);
             CurrentViewIndex = 0;
 
             RunStatus = "Full reset complete. All saved run and outreach data was cleared.";
@@ -1220,7 +1253,9 @@ public partial class MainWindowViewModel : ViewModelBase
             LastView = CurrentViewIndex.ToString(),
             RunKeywords = RunKeywords,
             PublishedAfterDays = PublishedAfterDays,
-            RunTop = RunTop
+            RunTop = RunTop,
+            RunMinReach = RunMinReach,
+            RunMaxReach = RunMaxReach
         });
     }
 
@@ -1233,11 +1268,24 @@ public partial class MainWindowViewModel : ViewModelBase
         var topValue = TryParseTop(RunTop, out var parsedTop)
             ? parsedTop
             : DefaultTop;
+        var minReachValue = TryParseReachPercent(RunMinReach, out var parsedMinReachPercent)
+            ? parsedMinReachPercent / 100.0
+            : DefaultMinReachPercent / 100.0;
+        var maxReachValue = TryParseReachPercent(RunMaxReach, out var parsedMaxReachPercent)
+            ? parsedMaxReachPercent / 100.0
+            : DefaultMaxReachPercent / 100.0;
+        if (minReachValue > maxReachValue)
+        {
+            minReachValue = DefaultMinReachPercent / 100.0;
+            maxReachValue = DefaultMaxReachPercent / 100.0;
+        }
 
         return new RunConfigProfile(
             parsedKeywords.Count == 0 ? DefaultRunKeywords : parsedKeywords,
             publishedAfterDaysValue,
             topValue,
+            minReachValue,
+            maxReachValue,
             false,
             false);
     }
@@ -1260,7 +1308,25 @@ public partial class MainWindowViewModel : ViewModelBase
             return (false, null, "Top must be a positive whole number.");
         }
 
-        return (true, new RunConfigProfile(parsedKeywords, parsedDays, parsedTop, false, false), string.Empty);
+        if (!TryParseReachPercent(RunMinReach, out var parsedMinReachPercent))
+        {
+            return (false, null, "Min reach must be a number from 0 to 100.");
+        }
+
+        if (!TryParseReachPercent(RunMaxReach, out var parsedMaxReachPercent))
+        {
+            return (false, null, "Max reach must be a number from 0 to 100.");
+        }
+
+        if (parsedMinReachPercent > parsedMaxReachPercent)
+        {
+            return (false, null, "Min reach must be less than or equal to max reach.");
+        }
+
+        return (
+            true,
+            new RunConfigProfile(parsedKeywords, parsedDays, parsedTop, parsedMinReachPercent / 100.0, parsedMaxReachPercent / 100.0, false, false),
+            string.Empty);
     }
 
     private static List<string> ParseRunKeywords(string rawKeywords)
@@ -1280,6 +1346,12 @@ public partial class MainWindowViewModel : ViewModelBase
     private static bool TryParseTop(string rawTop, out int top)
     {
         return int.TryParse(rawTop?.Trim(), out top) && top > 0;
+    }
+
+    private static bool TryParseReachPercent(string rawReach, out double reachPercent)
+    {
+        return double.TryParse(rawReach?.Trim(), NumberStyles.Float, CultureInfo.InvariantCulture, out reachPercent) &&
+               reachPercent is >= 0 and <= 100;
     }
 
     private RunConfigProfile ExpandRunProfileForQueueCoverage(RunConfigProfile baseProfile)
@@ -1551,8 +1623,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
         var keywordCount = profileResult.Profile.Keywords.Count;
         var dayLabel = profileResult.Profile.PublishedAfterDays == 1 ? "day" : "days";
+        var minReachPercent = profileResult.Profile.MinReach.HasValue ? profileResult.Profile.MinReach.Value * 100 : 0;
+        var maxReachPercent = profileResult.Profile.MaxReach.HasValue ? profileResult.Profile.MaxReach.Value * 100 : 100;
         RunConfigMessage =
-            $"Ready: {keywordCount} keyword(s), last {profileResult.Profile.PublishedAfterDays} {dayLabel}, top {profileResult.Profile.Top}.";
+            $"Ready: {keywordCount} keyword(s), last {profileResult.Profile.PublishedAfterDays} {dayLabel}, top {profileResult.Profile.Top}, reach {minReachPercent:0.#}-{maxReachPercent:0.#}%.";
         CommandPreview = _cliRunner.BuildCommandPreview(profileResult.Profile);
     }
 

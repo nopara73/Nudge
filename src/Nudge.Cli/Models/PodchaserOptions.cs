@@ -6,4 +6,6 @@ public sealed record PodchaserOptions
 
     public string? DevelopmentToken { get; init; }
     public string? ProductionToken { get; init; }
+    public string[]? DevelopmentFallbackTokens { get; init; }
+    public string[]? ProductionFallbackTokens { get; init; }
 }

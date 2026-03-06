@@ -1,4 +1,5 @@
 using System.Text.RegularExpressions;
+using System.Text.Json;
 using Nudge.Core.Interfaces;
 using Nudge.Core.Models;
 
@@ -9,7 +10,6 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
     private const double ReachWeight = 0.35;
     private const double FrequencyWeight = 0.25;
     private const double NicheFitWeight = 0.40;
-    private const double HighIntentWeight = 3.0;
     private const double BaselineIntentWeight = 1.0;
     private const double PenaltyIntentWeight = -2.0;
     private const double SoftPenaltyIntentWeight = -0.75;
@@ -21,25 +21,26 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
     private const double ActivityStaleSparse = 0.06;
     private const double ActivityStaleSingleEpisode = 0.03;
     private const int RecentEpisodeTitleWindow = 5;
-    private static readonly string[] HighIntentTokens =
-    [
-        "athlete", "masters", "hyrox", "crossfit", "triathlon", "performance", "strength", "vo2", "training", "competition",
-        "ranking", "race", "endurance", "power", "speed", "conditioning", "recovery", "escape", "velocity"
-    ];
+    private const double KeywordAlignmentFloor = 0.25;
+    private const int KeywordAlignmentTopKeywordCount = 6;
     private static readonly string[] BaselineTokens = ["longevity", "fitness", "aging", "healthspan"];
     private static readonly string[] PenaltyTokens = ["revenue", "sales", "monetize", "clients"];
     private static readonly string[] SoftPenaltyTokens =
     [
         "wellness", "mindset", "entrepreneur", "entrepreneurship", "marketing", "coaching", "business", "biohacking", "lifestyle"
     ];
+    private static readonly HashSet<string> GenericKeywordTokens = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "athlete", "athletes", "fitness", "longevity", "aging", "health", "healthspan", "performance", "training",
+        "strength", "masters", "competition"
+    };
     private readonly TimeProvider _timeProvider = timeProvider;
 
     public IntentScore Score(Show show, IReadOnlyList<string> keywords)
     {
-        _ = keywords;
         var reach = CalculateReach(show);
         var frequency = CalculateFrequency(show.Episodes);
-        var nicheFitResult = CalculateNicheFit(show);
+        var nicheFitResult = CalculateNicheFit(show, keywords);
         var newest = show.Episodes
             .Where(e => e.PublishedAtUtc.HasValue)
             .OrderByDescending(e => e.PublishedAtUtc)
@@ -48,6 +49,26 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         var activityScore = CalculateActivityScore(newest, show.Episodes.Count, _timeProvider.GetUtcNow());
         var baseScore = (reach * ReachWeight) + (frequency * FrequencyWeight) + (nicheFitResult.NormalizedScore * NicheFitWeight);
         var score = baseScore * activityScore;
+        // #region agent log
+        WriteDebugLogB9(
+            hypothesisId: "H5_activity_not_filtering_relevance",
+            location: "ScoringService.cs:Score",
+            message: "Computed final score components.",
+            data: new
+            {
+                showId = show.Id,
+                showName = show.Name,
+                episodeCount = show.Episodes.Count,
+                newestEpisodePublishedAtUtc = newest,
+                reach,
+                frequency,
+                nicheFit = nicheFitResult.NormalizedScore,
+                baseScore,
+                activityScore,
+                finalScore = score
+            },
+            runId: "initial");
+        // #endregion
 
         return new IntentScore
         {
@@ -82,7 +103,10 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             : 0.0;
         var activityQuality = Clamp01((episodeWindowScore * 0.5) + (validDateRatio * 0.3) + (hasRecent * 0.2));
 
-        return Clamp01((seededReach * 0.8) + (activityQuality * 0.2));
+        // Reach is an audience-size proxy and should not be inflated by activity.
+        // Apply a mild confidence discount for poor episode metadata instead.
+        var confidenceMultiplier = 0.8 + (activityQuality * 0.2);
+        return Clamp01(seededReach * confidenceMultiplier);
     }
 
     private double CalculateFrequency(IReadOnlyList<Episode> episodes)
@@ -140,7 +164,7 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         return 1 - ((averageGapDays - 7) / (45 - 7));
     }
 
-    private static NicheFitBreakdown CalculateNicheFit(Show show)
+    private static NicheFitBreakdown CalculateNicheFit(Show show, IReadOnlyList<string> keywords)
     {
         var tokenBag = BuildNicheTokenBag(show);
         if (tokenBag.Count == 0)
@@ -161,7 +185,6 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         var weightedScore = 0.0;
         var totalMatchedTokens = 0;
 
-        ApplyTokenHits(HighIntentTokens, HighIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
         ApplyTokenHits(BaselineTokens, BaselineIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
         ApplyTokenHits(PenaltyTokens, PenaltyIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
         ApplyTokenHits(SoftPenaltyTokens, SoftPenaltyIntentWeight, tokenBag, hits, ref weightedScore, ref totalMatchedTokens);
@@ -169,35 +192,176 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         var positiveContribution = hits
             .Where(hit => hit.Contribution > 0)
             .Sum(hit => hit.Contribution);
+        var keywordAlignment = CalculateKeywordAlignment(show, tokenBag, keywords);
+        var alignedPositiveContribution = keywordAlignment <= 0
+            ? 0
+            : positiveContribution * (KeywordAlignmentFloor + ((1 - KeywordAlignmentFloor) * keywordAlignment));
         var penaltyMagnitude = hits
             .Where(hit => hit.Contribution < 0)
             .Sum(hit => -hit.Contribution);
-        var normalizedScore = positiveContribution <= 0
+        var normalizedScore = alignedPositiveContribution <= 0
             ? 0
-            : Clamp01(positiveContribution / (positiveContribution + penaltyMagnitude + 1.0));
+            : Clamp01(alignedPositiveContribution / (alignedPositiveContribution + penaltyMagnitude + 1.0));
+        // #region agent log
+        WriteDebugLogB9(
+            hypothesisId: "H2_H3_generic_token_overweight",
+            location: "ScoringService.cs:CalculateNicheFit",
+            message: "Calculated niche fit contributions and alignment.",
+            data: new
+            {
+                showId = show.Id,
+                showName = show.Name,
+                totalMatchedTokens,
+                weightedScore,
+                positiveContribution,
+                keywordAlignment,
+                alignedPositiveContribution,
+                penaltyMagnitude,
+                normalizedScore,
+                topHits = hits
+                    .OrderByDescending(h => Math.Abs(h.Contribution))
+                    .Take(8)
+                    .Select(h => new { h.Token, h.Hits, h.Weight, h.Contribution })
+                    .ToArray()
+            },
+            runId: "initial");
+        // #endregion
 
         return new NicheFitBreakdown
         {
             TokenHits = hits,
             WeightedScore = weightedScore,
             NormalizedScore = normalizedScore,
-            PositiveContribution = positiveContribution,
+            PositiveContribution = alignedPositiveContribution,
             PenaltyMagnitude = penaltyMagnitude,
             TotalMatchedTokens = totalMatchedTokens,
             BusinessContextDetected = PenaltyTokens.Any(token => tokenBag.ContainsKey(token))
         };
     }
 
+    private static double CalculateKeywordAlignment(Show show, IReadOnlyDictionary<string, int> tokenBag, IReadOnlyList<string> keywords)
+    {
+        if (keywords.Count == 0)
+        {
+            return 1;
+        }
+
+        var keywordTokenFrequencies = BuildKeywordTokenFrequency(keywords);
+        if (keywordTokenFrequencies.Count == 0)
+        {
+            return 1;
+        }
+
+        var maxTokenSpecificity = keywordTokenFrequencies
+            .Keys
+            .Select(token => GetKeywordTokenSpecificity(token, keywordTokenFrequencies))
+            .DefaultIfEmpty(1.0)
+            .Max();
+        var corpus = BuildNicheCorpus(show).ToLowerInvariant();
+        var perKeywordScores = new List<double>(keywords.Count);
+        foreach (var rawKeyword in keywords)
+        {
+            if (string.IsNullOrWhiteSpace(rawKeyword))
+            {
+                continue;
+            }
+
+            var normalizedKeyword = rawKeyword.Trim().ToLowerInvariant();
+            var keywordTokens = WordTokenRegex()
+                .Matches(normalizedKeyword)
+                .Select(m => m.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            if (keywordTokens.Length == 0)
+            {
+                continue;
+            }
+
+            var singleTokenSpecificityScore = keywordTokens.Length == 1 && tokenBag.ContainsKey(keywordTokens[0])
+                ? Clamp01(GetKeywordTokenSpecificity(keywordTokens[0], keywordTokenFrequencies) / maxTokenSpecificity)
+                : 0.0;
+            var keywordScore = keywordTokens.Length == 1
+                ? singleTokenSpecificityScore
+                : (corpus.Contains(normalizedKeyword, StringComparison.Ordinal) ? 1.0 : 0.0);
+            perKeywordScores.Add(keywordScore);
+        }
+
+        if (perKeywordScores.Count == 0)
+        {
+            return 0;
+        }
+
+        var topCount = Math.Min(KeywordAlignmentTopKeywordCount, perKeywordScores.Count);
+        var alignment = perKeywordScores
+            .OrderByDescending(score => score)
+            .Take(topCount)
+            .Average();
+        // #region agent log
+        WriteDebugLogB9(
+            hypothesisId: "H3_keyword_alignment_too_permissive",
+            location: "ScoringService.cs:CalculateKeywordAlignment",
+            message: "Calculated per-keyword alignment for show.",
+            data: new
+            {
+                showId = show.Id,
+                showName = show.Name,
+                keywordCount = keywords.Count,
+                perKeywordScoresCount = perKeywordScores.Count,
+                topCount,
+                topScores = perKeywordScores.OrderByDescending(s => s).Take(topCount).ToArray(),
+                alignment
+            },
+            runId: "initial");
+        // #endregion
+        return alignment;
+    }
+
+    private static Dictionary<string, int> BuildKeywordTokenFrequency(IReadOnlyList<string> keywords)
+    {
+        var frequencies = new Dictionary<string, int>(StringComparer.OrdinalIgnoreCase);
+        foreach (var keyword in keywords)
+        {
+            if (string.IsNullOrWhiteSpace(keyword))
+            {
+                continue;
+            }
+
+            var distinctKeywordTokens = WordTokenRegex()
+                .Matches(keyword.Trim().ToLowerInvariant())
+                .Select(m => m.Value)
+                .Distinct(StringComparer.OrdinalIgnoreCase);
+            foreach (var token in distinctKeywordTokens)
+            {
+                if (frequencies.TryGetValue(token, out var count))
+                {
+                    frequencies[token] = count + 1;
+                }
+                else
+                {
+                    frequencies[token] = 1;
+                }
+            }
+        }
+
+        return frequencies;
+    }
+
+    private static double GetKeywordTokenSpecificity(string token, IReadOnlyDictionary<string, int> keywordTokenFrequencies)
+    {
+        if (!keywordTokenFrequencies.TryGetValue(token, out var frequency) || frequency <= 0)
+        {
+            return 0;
+        }
+
+        var baseSpecificity = 1.0 / frequency;
+        return GenericKeywordTokens.Contains(token)
+            ? baseSpecificity * 0.45
+            : baseSpecificity;
+    }
+
     private static Dictionary<string, int> BuildNicheTokenBag(Show show)
     {
-        var recentTitles = show.Episodes
-            .OrderByDescending(e => e.PublishedAtUtc ?? DateTimeOffset.MinValue)
-            .ThenBy(e => e.Title, StringComparer.OrdinalIgnoreCase)
-            .Take(RecentEpisodeTitleWindow)
-            .Select(e => e.Title)
-            .ToArray();
-        var weightedRecentTitles = string.Join(' ', Enumerable.Repeat(string.Join(' ', recentTitles), RecentTitleTokenMultiplier));
-        var corpus = string.Join(' ', [show.Name, show.Description ?? string.Empty, weightedRecentTitles]);
+        var corpus = BuildNicheCorpus(show);
         if (string.IsNullOrWhiteSpace(corpus))
         {
             return [];
@@ -218,6 +382,18 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         }
 
         return tokenBag;
+    }
+
+    private static string BuildNicheCorpus(Show show)
+    {
+        var recentTitles = show.Episodes
+            .OrderByDescending(e => e.PublishedAtUtc ?? DateTimeOffset.MinValue)
+            .ThenBy(e => e.Title, StringComparer.OrdinalIgnoreCase)
+            .Take(RecentEpisodeTitleWindow)
+            .Select(e => e.Title)
+            .ToArray();
+        var weightedRecentTitles = string.Join(' ', Enumerable.Repeat(string.Join(' ', recentTitles), RecentTitleTokenMultiplier));
+        return string.Join(' ', [show.Name, show.Description ?? string.Empty, weightedRecentTitles]);
     }
 
     private static void ApplyTokenHits(
@@ -290,4 +466,26 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
 
     [GeneratedRegex("[a-z0-9]+", RegexOptions.Compiled)]
     private static partial Regex WordTokenRegex();
+
+    private static void WriteDebugLogB9(string hypothesisId, string location, string message, object data, string runId)
+    {
+        try
+        {
+            var entry = new
+            {
+                sessionId = "b9cf3d",
+                runId,
+                hypothesisId,
+                location,
+                message,
+                data,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            };
+            File.AppendAllText("debug-b9cf3d.log", JsonSerializer.Serialize(entry) + Environment.NewLine);
+        }
+        catch
+        {
+            // Debug logging must never impact scoring behavior.
+        }
+    }
 }

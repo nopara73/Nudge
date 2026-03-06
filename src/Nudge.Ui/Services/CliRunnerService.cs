@@ -1,4 +1,5 @@
 using System.Diagnostics;
+using System.Globalization;
 using System.Text.Json;
 using Nudge.Ui.Models;
 
@@ -69,6 +70,18 @@ public sealed class CliRunnerService
         startInfo.ArgumentList.Add(profile.PublishedAfterDays.ToString());
         startInfo.ArgumentList.Add("--top");
         startInfo.ArgumentList.Add(profile.Top.ToString());
+        if (profile.MinReach.HasValue)
+        {
+            startInfo.ArgumentList.Add("--min-reach");
+            startInfo.ArgumentList.Add(profile.MinReach.Value.ToString("0.###", CultureInfo.InvariantCulture));
+        }
+
+        if (profile.MaxReach.HasValue)
+        {
+            startInfo.ArgumentList.Add("--max-reach");
+            startInfo.ArgumentList.Add(profile.MaxReach.Value.ToString("0.###", CultureInfo.InvariantCulture));
+        }
+
         startInfo.ArgumentList.Add("--json");
         startInfo.ArgumentList.Add("--pretty");
 

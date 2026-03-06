@@ -1,6 +1,7 @@
 using Nudge.Cli.Models;
 using Nudge.Core.Interfaces;
 using Nudge.Core.Models;
+using System.Text.Json;
 
 namespace Nudge.Cli.Services;
 
@@ -42,6 +43,7 @@ public sealed class PodcastRankingPipeline(
         var warnings = new List<string>();
         var diagnostics = new List<string>();
         var candidates = await _searchClient.SearchAsync(arguments.Keywords, arguments.PublishedAfterDays, cancellationToken);
+        AddReachSanitySignals(candidates, warnings, diagnostics, includeDebugDiagnostics);
         if (includeDebugDiagnostics)
         {
             diagnostics.Add($"Raw API shows before local filtering: {candidates.Count}");
@@ -64,6 +66,28 @@ public sealed class PodcastRankingPipeline(
             .ThenBy(r => r.ShowName, StringComparer.OrdinalIgnoreCase)
             .ThenBy(r => r.ShowId, StringComparer.Ordinal)
             .ToArray();
+        // #region agent log
+        WriteDebugLogB9(
+            hypothesisId: "H4_no_minimum_relevance_gate",
+            location: "PodcastRankingPipeline.cs:RunAsync",
+            message: "Sorted ranked outputs for final selection.",
+            data: new
+            {
+                rankedCount = ordered.Length,
+                top = ordered
+                    .Take(10)
+                    .Select(r => new
+                    {
+                        r.ShowName,
+                        r.Score,
+                        r.NicheFit,
+                        r.Reach,
+                        r.OutreachPriority
+                    })
+                    .ToArray()
+            },
+            runId: "initial");
+        // #endregion
 
         return new RankingRunResult
         {
@@ -193,6 +217,10 @@ public sealed class PodcastRankingPipeline(
             ContactValue = parseResult.Payload.PodcastEmail,
             Episodes = eligibleEpisodes
         };
+        if (!HasExactMultiWordKeywordPhraseMatch(show, keywords))
+        {
+            return null;
+        }
 
         var intent = _scoringService.Score(show, keywords);
         var adjustedScore = missingContactEmail ? Math.Max(0, intent.Score - MissingEmailPenalty) : intent.Score;
@@ -202,6 +230,27 @@ public sealed class PodcastRankingPipeline(
             frequency: intent.Frequency,
             nicheFit: intent.NicheFit,
             hasContactEmail: !missingContactEmail);
+        // #region agent log
+        WriteDebugLogB9(
+            hypothesisId: "H2_H3_generic_token_overweight",
+            location: "PodcastRankingPipeline.cs:BuildRankedTargetAsync",
+            message: "Computed scoring components for candidate show.",
+            data: new
+            {
+                showName = show.Name,
+                score = adjustedScore,
+                reach = intent.Reach,
+                frequency = intent.Frequency,
+                nicheFit = intent.NicheFit,
+                activityScore = intent.ActivityScore,
+                matchedTokens = intent.NicheFitBreakdown.TokenHits
+                    .OrderByDescending(h => Math.Abs(h.Contribution))
+                    .Take(8)
+                    .Select(h => new { h.Token, h.Hits, h.Weight, h.Contribution })
+                    .ToArray()
+            },
+            runId: "initial");
+        // #endregion
         return new RankedTarget
         {
             ShowId = show.Id,
@@ -256,6 +305,42 @@ public sealed class PodcastRankingPipeline(
         return "Low";
     }
 
+    private static bool HasExactMultiWordKeywordPhraseMatch(Show show, IReadOnlyList<string> keywords)
+    {
+        var multiWordKeywords = keywords
+            .Where(k => !string.IsNullOrWhiteSpace(k))
+            .Select(k => k.Trim())
+            .Where(k => k.Contains(' ', StringComparison.Ordinal))
+            .Distinct(StringComparer.OrdinalIgnoreCase)
+            .ToArray();
+        if (multiWordKeywords.Length == 0)
+        {
+            return true;
+        }
+
+        var corpus = NormalizePhraseText(string.Join(
+            ' ',
+            new[]
+            {
+                show.Name,
+                show.Description ?? string.Empty,
+                string.Join(' ', show.Episodes.Select(e => e.Title))
+            }));
+        return multiWordKeywords.Any(keyword => corpus.Contains(NormalizePhraseText(keyword), StringComparison.Ordinal));
+    }
+
+    private static string NormalizePhraseText(string text)
+    {
+        if (string.IsNullOrWhiteSpace(text))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(' ', text
+            .ToLowerInvariant()
+            .Split(TokenSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
     private static string DescribeFailure(Exception ex)
     {
         if (ex is HttpRequestException { StatusCode: { } statusCode })
@@ -269,6 +354,43 @@ public sealed class PodcastRankingPipeline(
         }
 
         return "feed fetch failed";
+    }
+
+    private static void AddReachSanitySignals(
+        IReadOnlyList<PodcastSearchResult> candidates,
+        List<string> warnings,
+        List<string> diagnostics,
+        bool includeDebugDiagnostics)
+    {
+        if (candidates.Count == 0)
+        {
+            return;
+        }
+
+        var lowBaselineReachCount = candidates.Count(c => c.EstimatedReach <= 0.25);
+        var veryHighReachCount = candidates.Count(c => c.EstimatedReach >= 0.95);
+        var veryLowReachCount = candidates.Count(c => c.EstimatedReach <= 0.05);
+
+        if (lowBaselineReachCount >= Math.Ceiling(candidates.Count * 0.60))
+        {
+            warnings.Add(
+                $"Reach signal confidence is low: {lowBaselineReachCount}/{candidates.Count} shows used low-baseline reach (<=0.25).");
+        }
+
+        if (veryHighReachCount >= Math.Ceiling(candidates.Count * 0.70) && candidates.Count >= 10)
+        {
+            warnings.Add(
+                $"Reach signal looks skewed high: {veryHighReachCount}/{candidates.Count} shows have reach >= 0.95.");
+        }
+
+        if (includeDebugDiagnostics)
+        {
+            var minReach = candidates.Min(c => c.EstimatedReach);
+            var maxReach = candidates.Max(c => c.EstimatedReach);
+            var averageReach = candidates.Average(c => c.EstimatedReach);
+            diagnostics.Add(
+                $"Reach sanity: min={minReach:F3}, max={maxReach:F3}, avg={averageReach:F3}, lowBaseline(<=0.25)={lowBaselineReachCount}, veryHigh(>=0.95)={veryHighReachCount}, veryLow(<=0.05)={veryLowReachCount}");
+        }
     }
 
     private static bool TryDetectAllowedLanguage(PodcastSearchResult candidate, out string detectedLanguage)
@@ -374,5 +496,27 @@ public sealed class PodcastRankingPipeline(
         English,
         Hungarian,
         Other
+    }
+
+    private static void WriteDebugLogB9(string hypothesisId, string location, string message, object data, string runId)
+    {
+        try
+        {
+            var entry = new
+            {
+                sessionId = "b9cf3d",
+                runId,
+                hypothesisId,
+                location,
+                message,
+                data,
+                timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+            };
+            File.AppendAllText("debug-b9cf3d.log", JsonSerializer.Serialize(entry) + Environment.NewLine);
+        }
+        catch
+        {
+            // Debug logging should never break ranking execution.
+        }
     }
 }

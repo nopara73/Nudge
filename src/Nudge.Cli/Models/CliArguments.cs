@@ -5,5 +5,7 @@ public sealed record CliArguments(
     int PublishedAfterDays,
     int Top,
     bool JsonOutput,
-    bool PrettyJson
+    bool PrettyJson,
+    double? MinReach = null,
+    double? MaxReach = null
 );

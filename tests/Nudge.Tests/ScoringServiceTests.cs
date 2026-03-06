@@ -14,7 +14,7 @@ public sealed class ScoringServiceTests
         {
             Id = "show-1",
             Name = "Masters Performance Training",
-            Description = "Athlete-focused strength and VO2 sessions.",
+            Description = "Athlete-focused strength, VO2, and fitness sessions.",
             EstimatedReach = 0.7,
             Episodes =
             [
@@ -24,7 +24,7 @@ public sealed class ScoringServiceTests
             ]
         };
 
-        var result = service.Score(show, ["longevity", "fitness"]);
+        var result = service.Score(show, ["fitness"]);
         var expectedBase = (result.Reach * 0.35) + (result.Frequency * 0.25) + (result.NicheFit * 0.40);
         var expected = expectedBase * result.ActivityScore;
 
@@ -34,7 +34,7 @@ public sealed class ScoringServiceTests
         Assert.InRange(result.ActivityScore, 0, 1);
         Assert.Equal(expected, result.Score, 10);
         Assert.NotEmpty(result.NicheFitBreakdown.TokenHits);
-        Assert.Contains(result.NicheFitBreakdown.TokenHits, t => t.Token == "athlete" && t.Weight == 3.0);
+        Assert.Contains(result.NicheFitBreakdown.TokenHits, t => t.Token == "fitness" && t.Weight == 1.0);
         Assert.Equal(result.NicheFit, result.NicheFitBreakdown.NormalizedScore, 10);
     }
 
@@ -59,7 +59,7 @@ public sealed class ScoringServiceTests
     }
 
     [Fact]
-    public void Score_AthleteFocusedShow_OutranksGenericLongevity_WhenCadenceIsSimilar()
+    public void Score_GenericLongevityShow_OutranksAthleteFocused_WhenQueryIsLongevityFitnessOnly()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var service = new ScoringService(new FixedTimeProvider(now));
@@ -85,8 +85,8 @@ public sealed class ScoringServiceTests
         var athleteScore = service.Score(athleteShow, ["longevity", "fitness"]);
         var genericScore = service.Score(genericShow, ["longevity", "fitness"]);
 
-        Assert.True(athleteScore.NicheFit > genericScore.NicheFit);
-        Assert.True(athleteScore.Score > genericScore.Score);
+        Assert.True(genericScore.NicheFit >= athleteScore.NicheFit);
+        Assert.True(genericScore.Score >= athleteScore.Score);
     }
 
     [Fact]
@@ -114,7 +114,7 @@ public sealed class ScoringServiceTests
     }
 
     [Fact]
-    public void Score_PureLongevityScience_RemainsButBelowPerformanceHeavy()
+    public void Score_PureLongevityScience_OutranksPerformanceHeavy_ForLongevityOnlyQuery()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var service = new ScoringService(new FixedTimeProvider(now));
@@ -141,7 +141,7 @@ public sealed class ScoringServiceTests
         var performanceScore = service.Score(performanceShow, ["longevity"]);
 
         Assert.True(longevityScore.NicheFit > 0);
-        Assert.True(longevityScore.NicheFit < performanceScore.NicheFit);
+        Assert.True(longevityScore.NicheFit >= performanceScore.NicheFit);
     }
 
     [Fact]
@@ -183,29 +183,29 @@ public sealed class ScoringServiceTests
     }
 
     [Fact]
-    public void Score_MoreHighIntentTokens_IncreasesNicheFitMonotonically()
+    public void Score_MoreBaselineTokens_IncreasesNicheFitMonotonically()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var service = new ScoringService(new FixedTimeProvider(now));
         var low = BuildShow("low", "Longevity Fitness", "Aging healthspan.", 0.6, now, "Longevity update", "Fitness recap", "Aging notes");
         var medium = BuildShow(
             "medium",
-            "Athlete Longevity Performance",
-            "Fitness and training with masters focus.",
+            "Longevity Fitness Aging",
+            "Fitness and aging updates for better healthspan.",
             0.6,
             now,
-            "Training update",
-            "Performance recap",
-            "Longevity and fitness");
+            "Longevity and aging update",
+            "Fitness recap",
+            "Healthspan notes");
         var high = BuildShow(
             "high",
-            "Athlete Masters Performance Training Competition Ranking",
-            "Strength VO2 crossfit hyrox PR.",
+            "Longevity Fitness Aging Healthspan",
+            "Longevity fitness aging healthspan insights.",
             0.6,
             now,
-            "Competition training",
-            "PR and ranking",
-            "Strength VO2 block");
+            "Longevity fitness aging healthspan",
+            "Healthspan aging longevity",
+            "Fitness longevity healthspan");
 
         var lowScore = service.Score(low, ["longevity", "fitness"]);
         var mediumScore = service.Score(medium, ["longevity", "fitness"]);
@@ -222,13 +222,13 @@ public sealed class ScoringServiceTests
         var service = new ScoringService(new FixedTimeProvider(now));
         var noPenalty = BuildShow(
             "no-penalty",
-            "Athlete Performance Training",
-            "Masters strength and VO2 focus.",
+            "Longevity Fitness Focus",
+            "Longevity and fitness focus with no business context.",
             0.6,
             now,
-            "Competition prep",
-            "Training block",
-            "Performance review");
+            "Longevity prep",
+            "Fitness block",
+            "Aging review");
         var withPenalty = BuildShow(
             "with-penalty",
             "Athlete Performance Training Revenue Marketing",
@@ -247,14 +247,14 @@ public sealed class ScoringServiceTests
     }
 
     [Fact]
-    public void Score_RecentPerformanceEpisodeTitles_BoostNicheFit_OverTheoryOnlyTitles()
+    public void Score_RecentKeywordMatchedEpisodeTitles_BoostNicheFit_OverTheoryOnlyTitles()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var service = new ScoringService(new FixedTimeProvider(now));
         var theoryHeavyTitles = BuildShow(
             id: "theory-heavy",
-            name: "Longevity Athlete Lab",
-            description: "Athlete performance and healthspan perspective.",
+            name: "Longevity Lab",
+            description: "Longevity and healthspan perspective.",
             estimatedReach: 0.65,
             now,
             "Longevity theory deep dive",
@@ -262,19 +262,59 @@ public sealed class ScoringServiceTests
             "Aging pathways explained");
         var performanceHeavyTitles = BuildShow(
             id: "performance-heavy",
-            name: "Longevity Athlete Lab",
-            description: "Athlete performance and healthspan perspective.",
+            name: "Longevity Lab",
+            description: "Longevity and healthspan perspective.",
             estimatedReach: 0.65,
             now,
-            "Competition training block",
-            "VO2 and strength progression",
-            "Masters race prep");
+            "Longevity and fitness progression",
+            "Healthspan and aging markers",
+            "Longevity fitness habits");
 
         var theoryScore = service.Score(theoryHeavyTitles, ["longevity", "fitness"]);
         var performanceScore = service.Score(performanceHeavyTitles, ["longevity", "fitness"]);
 
         Assert.True(performanceScore.NicheFit > theoryScore.NicheFit);
         Assert.True(performanceScore.Score > theoryScore.Score);
+    }
+
+    [Fact]
+    public void Score_KeywordAlignment_DemotesShowsMatchingOnlyGenericTerms()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var service = new ScoringService(new FixedTimeProvider(now));
+        var query = new[]
+        {
+            "masters athlete",
+            "over 40 fitness",
+            "longevity performance",
+            "crossfit masters",
+            "vo2 max aging",
+            "rejuvenation olympics"
+        };
+        var relevant = BuildShow(
+            id: "relevant",
+            name: "Masters Athlete Performance Lab",
+            description: "Over 40 fitness with VO2 training and longevity performance.",
+            estimatedReach: 0.62,
+            now,
+            "Crossfit masters training block",
+            "VO2 max aging and pacing",
+            "Rejuvenation olympics prep");
+        var genericTermOnly = BuildShow(
+            id: "generic-term",
+            name: "Gear Masters",
+            description: "Guitar pedals and amp deep dives.",
+            estimatedReach: 0.62,
+            now,
+            "Best pedals this week",
+            "Tube amp maintenance",
+            "Studio guitar setup");
+
+        var relevantScore = service.Score(relevant, query);
+        var genericScore = service.Score(genericTermOnly, query);
+
+        Assert.True(relevantScore.NicheFit > genericScore.NicheFit);
+        Assert.True(relevantScore.Score > genericScore.Score);
     }
 
     [Fact]
@@ -312,6 +352,26 @@ public sealed class ScoringServiceTests
         Assert.Equal(0.7, service.Score(d90, ["x"]).ActivityScore, 10);
         Assert.Equal(0.4, service.Score(d180, ["x"]).ActivityScore, 10);
         Assert.Equal(0.03, service.Score(stale, ["x"]).ActivityScore, 10);
+    }
+
+    [Fact]
+    public void Score_Reach_DoesNotIncreaseBeyondSeededReach()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var service = new ScoringService(new FixedTimeProvider(now));
+        var show = BuildShow(
+            id: "reach-check",
+            name: "Recent small show",
+            description: "Fresh episodes but unknown audience size.",
+            estimatedReach: 0.2,
+            now,
+            "Episode one",
+            "Episode two",
+            "Episode three");
+
+        var result = service.Score(show, ["fitness"]);
+
+        Assert.True(result.Reach <= 0.2 + 1e-10);
     }
 
     private static Show BuildShow(

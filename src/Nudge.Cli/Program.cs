@@ -31,7 +31,11 @@ if (!cliUseMockResult.Success)
 var verboseDiagnostics = ParseVerboseDiagnostics(args);
 var configuration = BuildConfiguration();
 var podchaserOptions = BuildPodchaserOptions(configuration);
-var selectedToken = ResolvePodcastSearchApiToken(podchaserOptions);
+var tokenMemory = new PodchaserTokenMemory();
+var candidateTokens = PodchaserTokenMemory.PrioritizeRememberedToken(
+    ResolvePodcastSearchApiTokens(podchaserOptions),
+    tokenMemory.LoadLastKnownGoodToken());
+var selectedToken = candidateTokens.FirstOrDefault();
 if (verboseDiagnostics)
 {
     LogPodchaserConfigurationStatus(podchaserOptions);
@@ -62,17 +66,139 @@ var mode = PodcastSearchClientModeResolver.ResolveUseMock(
     cliUseMockResult.UseMock,
     envUseMock,
     selectedToken);
+// #region agent log
+WriteDebugLog(
+    hypothesisId: "H1_mode_token",
+    location: "Program.cs:ResolveUseMock",
+    message: "Resolved podcast search mode.",
+    data: new
+    {
+        cliUseMock = cliUseMockResult.UseMock,
+        envUseMockRaw,
+        envUseMockParsed = envUseMock,
+        resolvedUseMock = mode.UseMock,
+        missingApiKeyWarning = mode.MissingApiKeyWarning,
+        selectedTokenLength = selectedToken?.Length ?? 0,
+        selectedTokenDotCount = selectedToken?.Count(c => c == '.') ?? 0,
+        keywordsCount = cliArgs.Keywords.Count
+    },
+    runId: "initial");
+// #endregion
 if (mode.MissingApiKeyWarning)
 {
     Console.Error.WriteLine("Warning: Podchaser token missing or invalid; falling back to mock podcast search client.");
 }
 
-var services = ConfigureServices(options, mode.UseMock, configuration);
+var services = ConfigureServices(options, mode.UseMock, configuration, selectedToken);
 var pipeline = services.GetRequiredService<PodcastRankingPipeline>();
+// #region agent log
+WriteDebugLog(
+    hypothesisId: "H1_mode_token",
+    location: "Program.cs:BeforePipelineRun",
+    message: "Prepared pipeline invocation.",
+    data: new
+    {
+        modeUseMock = mode.UseMock,
+        apiBaseUrl = options.BaseUrl,
+        publishedAfterDays = cliArgs.PublishedAfterDays,
+        top = cliArgs.Top,
+        minReach = cliArgs.MinReach,
+        maxReach = cliArgs.MaxReach
+    },
+    runId: "initial");
+// #endregion
 var run = await pipeline.RunAsync(cliArgs, includeDebugDiagnostics: verboseDiagnostics);
-var limitedResults = RankedTargetSelection.SelectTop(run.Results, cliArgs.Top);
+string? successfulApiToken = null;
+var exhaustedAllApiTokens = false;
+if (!mode.UseMock && run.Results.Count == 0)
+{
+    var liveClient = services.GetService<ListenNotesPodcastSearchClient>();
+    var tokenFailed = DidPodchaserTokenFail(liveClient);
+    if (tokenFailed)
+    {
+        var nextTokenIndex = 1;
+        foreach (var fallbackToken in candidateTokens.Skip(1))
+        {
+            Console.Error.WriteLine($"Warning: Primary Podchaser token failed; retrying with fallback token #{nextTokenIndex}.");
+            nextTokenIndex++;
 
-foreach (var warning in run.Warnings)
+            using var fallbackTokenServices = ConfigureServices(options, useMock: false, configuration, fallbackToken);
+            var fallbackPipeline = fallbackTokenServices.GetRequiredService<PodcastRankingPipeline>();
+            var fallbackRun = await fallbackPipeline.RunAsync(cliArgs, includeDebugDiagnostics: verboseDiagnostics);
+            var fallbackClient = fallbackTokenServices.GetService<ListenNotesPodcastSearchClient>();
+            var fallbackTokenFailed = DidPodchaserTokenFail(fallbackClient);
+
+            run = new RankingRunResult
+            {
+                Results = fallbackRun.Results,
+                Warnings = run.Warnings
+                    .Concat(fallbackRun.Warnings)
+                    .Distinct(StringComparer.Ordinal)
+                    .OrderBy(w => w, StringComparer.OrdinalIgnoreCase)
+                    .ToArray(),
+                Diagnostics = run.Diagnostics
+                    .Concat(fallbackRun.Diagnostics)
+                    .ToArray()
+            };
+
+            if (!fallbackTokenFailed)
+            {
+                successfulApiToken = fallbackToken;
+                break;
+            }
+        }
+
+        exhaustedAllApiTokens = run.Results.Count == 0;
+    }
+    else if (!string.IsNullOrWhiteSpace(selectedToken))
+    {
+        successfulApiToken = selectedToken;
+    }
+}
+else if (!mode.UseMock && !DidPodchaserTokenFail(services.GetService<ListenNotesPodcastSearchClient>()) && !string.IsNullOrWhiteSpace(selectedToken))
+{
+    successfulApiToken = selectedToken;
+}
+
+if (!mode.UseMock &&
+    exhaustedAllApiTokens &&
+    run.Results.Count == 0)
+{
+    Console.Error.WriteLine("Warning: All Podchaser tokens were exhausted or rejected; retrying with mock podcast search client.");
+    using var fallbackServices = ConfigureServices(options, useMock: true, configuration);
+    var fallbackPipeline = fallbackServices.GetRequiredService<PodcastRankingPipeline>();
+    var fallbackRun = await fallbackPipeline.RunAsync(cliArgs, includeDebugDiagnostics: verboseDiagnostics);
+    run = new RankingRunResult
+    {
+        Results = fallbackRun.Results,
+        Warnings = run.Warnings
+            .Concat(fallbackRun.Warnings)
+            .Append("All Podchaser tokens failed; returned fallback mock search results.")
+            .Distinct(StringComparer.Ordinal)
+            .OrderBy(w => w, StringComparer.OrdinalIgnoreCase)
+            .ToArray(),
+        Diagnostics = run.Diagnostics
+            .Concat(fallbackRun.Diagnostics)
+            .Append("Auto-fallback: switched to mock search after Podchaser token failure.")
+            .ToArray()
+    };
+}
+
+if (!string.IsNullOrWhiteSpace(successfulApiToken))
+{
+    tokenMemory.RememberToken(successfulApiToken);
+}
+var runWarnings = run.Warnings.ToList();
+var (reachFilteredResults, filteredOutByReach) = RankedTargetSelection.FilterByReach(run.Results, cliArgs.MinReach, cliArgs.MaxReach);
+if (filteredOutByReach > 0)
+{
+    var minLabel = cliArgs.MinReach.HasValue ? cliArgs.MinReach.Value.ToString("0.###") : "0.0";
+    var maxLabel = cliArgs.MaxReach.HasValue ? cliArgs.MaxReach.Value.ToString("0.###") : "1.0";
+    runWarnings.Add($"Reach filter [{minLabel}, {maxLabel}] removed {filteredOutByReach} show(s).");
+}
+var limitedResults = RankedTargetSelection.SelectTop(reachFilteredResults, cliArgs.Top);
+
+foreach (var warning in runWarnings)
 {
     Console.Error.WriteLine($"Warning: {warning}");
 }
@@ -95,7 +221,7 @@ if (cliArgs.JsonOutput)
         Arguments = cliArgs,
         Total = limitedResults.Count,
         Results = limitedResults,
-        Warnings = run.Warnings
+        Warnings = runWarnings
     };
 
     var json = JsonSerializer.Serialize(
@@ -110,7 +236,7 @@ if (cliArgs.JsonOutput)
 
 return 0;
 
-static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, IConfiguration configuration)
+static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, IConfiguration configuration, string? apiTokenOverride = null)
 {
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddOptions();
@@ -123,6 +249,15 @@ static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, ICo
     serviceCollection.AddSingleton<IEpisodeTranscriptService, EpisodeTranscriptService>();
     serviceCollection.AddSingleton<IEpisodeSttTranscriber, NoOpEpisodeSttTranscriber>();
     serviceCollection.AddSingleton<MockPodcastSearchClient>();
+    serviceCollection.AddSingleton<ListenNotesPodcastSearchClient>(provider =>
+        new ListenNotesPodcastSearchClient(
+            provider.GetRequiredService<IHttpClientFactory>().CreateClient("podcast-search"),
+            provider.GetRequiredService<NudgeOptions>() with
+            {
+                ApiKey = string.IsNullOrWhiteSpace(apiTokenOverride)
+                    ? ResolvePodcastSearchApiTokens(provider.GetRequiredService<IOptions<PodchaserOptions>>().Value).FirstOrDefault()
+                    : apiTokenOverride.Trim()
+            }));
     serviceCollection.AddHttpClient("podcast-search", (provider, client) =>
     {
         var opts = provider.GetRequiredService<NudgeOptions>();
@@ -132,12 +267,7 @@ static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, ICo
     serviceCollection.AddSingleton<IPodcastSearchClient>(
         provider => useMock
             ? provider.GetRequiredService<MockPodcastSearchClient>()
-            : new ListenNotesPodcastSearchClient(
-                provider.GetRequiredService<IHttpClientFactory>().CreateClient("podcast-search"),
-                provider.GetRequiredService<NudgeOptions>() with
-                {
-                    ApiKey = ResolvePodcastSearchApiToken(provider.GetRequiredService<IOptions<PodchaserOptions>>().Value)
-                }));
+            : provider.GetRequiredService<ListenNotesPodcastSearchClient>());
     serviceCollection.AddHttpClient("rss", client =>
     {
         client.Timeout = TimeSpan.FromSeconds(10);
@@ -164,7 +294,7 @@ static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, ICo
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  Nudge.Cli --keywords \"ai,startups\" --published-after-days 60 [--top 3] [--json] [--pretty] [--use-mock] [--verbose]");
+    Console.WriteLine("  Nudge.Cli --keywords \"ai,startups\" --published-after-days 60 [--top 3] [--min-reach 0.2] [--max-reach 0.9] [--json] [--pretty] [--use-mock] [--verbose]");
     Console.WriteLine("  Nudge.Cli \"ai,startups\" 30");
 }
 
@@ -229,19 +359,45 @@ static void LogPodchaserConfigurationStatus(PodchaserOptions options)
         $"Debug: nudge.local.json found={configFound}; Podchaser tokens detected: development={hasDevelopmentToken}, production={hasProductionToken}.");
 }
 
-static string? ResolvePodcastSearchApiToken(PodchaserOptions options)
+static IReadOnlyList<string> ResolvePodcastSearchApiTokens(PodchaserOptions options)
 {
+    var tokens = new List<string>();
+
     if (!string.IsNullOrWhiteSpace(options.ProductionToken))
     {
-        return options.ProductionToken.Trim();
+        tokens.Add(options.ProductionToken.Trim());
     }
 
     if (!string.IsNullOrWhiteSpace(options.DevelopmentToken))
     {
-        return options.DevelopmentToken.Trim();
+        tokens.Add(options.DevelopmentToken.Trim());
     }
 
-    return null;
+    if (options.ProductionFallbackTokens is not null)
+    {
+        foreach (var token in options.ProductionFallbackTokens)
+        {
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                tokens.Add(token.Trim());
+            }
+        }
+    }
+
+    if (options.DevelopmentFallbackTokens is not null)
+    {
+        foreach (var token in options.DevelopmentFallbackTokens)
+        {
+            if (!string.IsNullOrWhiteSpace(token))
+            {
+                tokens.Add(token.Trim());
+            }
+        }
+    }
+
+    return tokens
+        .Distinct(StringComparer.Ordinal)
+        .ToArray();
 }
 
 static (bool Success, NudgeOptions? Options, string? Error) BuildNudgeOptionsFromEnvironment(string? apiKey)
@@ -320,4 +476,31 @@ static Uri ParseAbsoluteUriOrThrow(string url)
     }
 
     throw new InvalidOperationException("NUDGE_PODCAST_API_BASEURL must be a valid absolute URL.");
+}
+
+static bool DidPodchaserTokenFail(ListenNotesPodcastSearchClient? client)
+{
+    return client is { WasPointBudgetExceeded: true } || client is { WasTokenRejected: true };
+}
+
+static void WriteDebugLog(string hypothesisId, string location, string message, object data, string runId)
+{
+    try
+    {
+        var entry = new
+        {
+            sessionId = "8d2ec3",
+            runId,
+            hypothesisId,
+            location,
+            message,
+            data,
+            timestamp = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds()
+        };
+        File.AppendAllText("debug-8d2ec3.log", JsonSerializer.Serialize(entry) + Environment.NewLine);
+    }
+    catch
+    {
+        // Debug logging should never break CLI execution.
+    }
 }

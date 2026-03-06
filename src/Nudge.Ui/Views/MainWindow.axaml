@@ -92,6 +92,25 @@
                                            TextWrapping="Wrap"
                                            Foreground="#6B7280" />
 
+                                <TextBlock Text="Reach Filter (%)" FontWeight="SemiBold" />
+                                <Grid ColumnDefinitions="Auto,Auto,Auto,Auto" ColumnSpacing="8">
+                                    <TextBlock Text="Min" VerticalAlignment="Center" />
+                                    <TextBox Grid.Column="1"
+                                             Text="{Binding RunMinReach}"
+                                             Width="90"
+                                             Watermark="0"
+                                             HorizontalAlignment="Left" />
+                                    <TextBlock Grid.Column="2" Text="Max" VerticalAlignment="Center" />
+                                    <TextBox Grid.Column="3"
+                                             Text="{Binding RunMaxReach}"
+                                             Width="90"
+                                             Watermark="100"
+                                             HorizontalAlignment="Left" />
+                                </Grid>
+                                <TextBlock Text="Use 0-100. 0 to 100 keeps everything; narrower values filter by reach."
+                                           TextWrapping="Wrap"
+                                           Foreground="#6B7280" />
+
                                 <TextBlock Text="{Binding RunConfigMessage}" FontWeight="SemiBold" Foreground="#1F2937" />
 
                                 <Button Content="Run CLI + Ingest"

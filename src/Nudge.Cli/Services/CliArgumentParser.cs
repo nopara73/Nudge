@@ -1,5 +1,6 @@
 using Nudge.Cli.Models;
 using Nudge.Core.Models;
+using System.Globalization;
 
 namespace Nudge.Cli.Services;
 
@@ -61,6 +62,8 @@ public static class CliArgumentParser
         var keywordsRaw = named.TryGetValue("--keywords", out var k) ? k : positional.FirstOrDefault() ?? string.Empty;
         var daysRaw = named.TryGetValue("--published-after-days", out var d) ? d : positional.Skip(1).FirstOrDefault() ?? "30";
         var topRaw = named.TryGetValue("--top", out var t) ? t : "3";
+        var minReachRaw = named.TryGetValue("--min-reach", out var minReachValue) ? minReachValue : null;
+        var maxReachRaw = named.TryGetValue("--max-reach", out var maxReachValue) ? maxReachValue : null;
 
         if (!int.TryParse(daysRaw, out var days) || days < 0)
         {
@@ -74,11 +77,46 @@ public static class CliArgumentParser
                 new RssParseIssue("invalid_top", "top must be a positive integer."));
         }
 
+        if (!TryParseReachBound(minReachRaw, "min_reach", out var minReach, out var minReachError))
+        {
+            return Result<CliArguments>.Fail(minReachError!);
+        }
+
+        if (!TryParseReachBound(maxReachRaw, "max_reach", out var maxReach, out var maxReachError))
+        {
+            return Result<CliArguments>.Fail(maxReachError!);
+        }
+
+        if (minReach.HasValue && maxReach.HasValue && minReach.Value > maxReach.Value)
+        {
+            return Result<CliArguments>.Fail(
+                new RssParseIssue("invalid_reach_bounds", "min_reach must be less than or equal to max_reach."));
+        }
+
         var keywords = keywordsRaw
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .ToArray();
 
-        return Result<CliArguments>.Ok(new CliArguments(keywords, days, top, json, pretty));
+        return Result<CliArguments>.Ok(new CliArguments(keywords, days, top, json, pretty, minReach, maxReach));
+    }
+
+    private static bool TryParseReachBound(string? rawValue, string codeSuffix, out double? parsedValue, out RssParseIssue? error)
+    {
+        parsedValue = null;
+        error = null;
+        if (string.IsNullOrWhiteSpace(rawValue))
+        {
+            return true;
+        }
+
+        if (!double.TryParse(rawValue, NumberStyles.Float, CultureInfo.InvariantCulture, out var value) || value < 0 || value > 1)
+        {
+            error = new RssParseIssue($"invalid_{codeSuffix}", $"{codeSuffix} must be a number between 0.0 and 1.0.");
+            return false;
+        }
+
+        parsedValue = value;
+        return true;
     }
 }

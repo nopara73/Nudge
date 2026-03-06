@@ -56,4 +56,6 @@ public sealed class SessionState
     public string RunKeywords { get; init; } = string.Empty;
     public string PublishedAfterDays { get; init; } = string.Empty;
     public string RunTop { get; init; } = string.Empty;
+    public string RunMinReach { get; init; } = string.Empty;
+    public string RunMaxReach { get; init; } = string.Empty;
 }
