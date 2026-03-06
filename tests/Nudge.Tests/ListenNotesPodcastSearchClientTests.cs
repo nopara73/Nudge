@@ -223,6 +223,51 @@ public sealed class ListenNotesPodcastSearchClientTests
     }
 
     [Fact]
+    public async Task SearchAsync_KeepsMappedResults_WhenGraphQlErrorsExistButDataIsUsable()
+    {
+        var calls = 0;
+        var handler = new DelegateHttpMessageHandler((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "errors": [
+                        {
+                          "message": "Field \"episodeAudienceEstimate\" is not accessible for this plan"
+                        }
+                      ],
+                      "data": {
+                        "podcasts": {
+                          "data": [
+                            {
+                              "id": "pod-usable",
+                              "title": "Usable Podcast",
+                              "description": "The response still contains valid mapped results.",
+                              "language": "en",
+                              "rssUrl": "https://example.com/usable.xml",
+                              "powerScore": 60
+                            }
+                          ]
+                        }
+                      }
+                    }
+                    """)
+            });
+        });
+
+        var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
+        var results = await client.SearchAsync(["ai"], 30, 3);
+
+        Assert.Single(results);
+        Assert.Equal(1, calls);
+        Assert.False(client.LastSearchDiagnostics.LegacyFallbackTriggered);
+        Assert.Equal("podchaser:pod-usable", results[0].Id);
+    }
+
+    [Fact]
     public async Task SearchAsync_SetsBudgetExhaustedFlag_WhenApiReturnsRemainingPointsError()
     {
         var handler = new DelegateHttpMessageHandler((_, _) =>
@@ -599,6 +644,127 @@ public sealed class ListenNotesPodcastSearchClientTests
         Assert.Equal(1, calls);
         Assert.True(client.LastSearchDiagnostics.CacheHit);
         Assert.Equal(1, client.LastSearchDiagnostics.RawCandidatesReturned);
+    }
+
+    [Fact]
+    public async Task SearchAsync_DoesNotReuseEmptyCachedResults()
+    {
+        var calls = 0;
+        var cacheFilePath = Path.Combine(Path.GetTempPath(), "nudge-tests", Guid.NewGuid().ToString("N"), "podchaser-cache.json");
+        var cache = new PodchaserSearchCache(cacheFilePath, TimeProvider.System, TimeSpan.FromHours(1));
+        var emptyHandler = new DelegateHttpMessageHandler((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent("""{"data":{"podcasts":{"data":[]}}}""")
+            });
+        });
+
+        var firstClient = BuildClient(
+            emptyHandler,
+            new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl },
+            cache,
+            "primary");
+        var firstResults = await firstClient.SearchAsync(["ai"], 30, 3);
+
+        Assert.Empty(firstResults);
+        Assert.False(firstClient.LastSearchDiagnostics.CacheHit);
+
+        var populatedHandler = new DelegateHttpMessageHandler((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "data": {
+                        "podcasts": {
+                          "data": [
+                            {
+                              "id": "pod-after-empty",
+                              "title": "Fresh Podcast",
+                              "description": "Should not be hidden by an empty cache hit.",
+                              "language": "en",
+                              "rssUrl": "https://example.com/fresh.xml",
+                              "powerScore": 55
+                            }
+                          ]
+                        }
+                      }
+                    }
+                    """)
+            });
+        });
+
+        var secondClient = BuildClient(
+            populatedHandler,
+            new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl },
+            cache,
+            "primary");
+        var secondResults = await secondClient.SearchAsync(["ai"], 30, 3);
+
+        Assert.Single(secondResults);
+        Assert.False(secondClient.LastSearchDiagnostics.CacheHit);
+        Assert.Equal(2, calls);
+    }
+
+    [Fact]
+    public async Task SearchAsync_SeparatesCacheEntriesByTokenScope()
+    {
+        var calls = 0;
+        var cacheFilePath = Path.Combine(Path.GetTempPath(), "nudge-tests", Guid.NewGuid().ToString("N"), "podchaser-cache.json");
+        var cache = new PodchaserSearchCache(cacheFilePath, TimeProvider.System, TimeSpan.FromHours(1));
+        var handler = new DelegateHttpMessageHandler((request, _) =>
+        {
+            calls++;
+            var token = request.Headers.Authorization?.Parameter ?? string.Empty;
+            var payload = token.Contains("fallback", StringComparison.Ordinal)
+                ? """
+                  {
+                    "data": {
+                      "podcasts": {
+                        "data": [
+                          {
+                            "id": "pod-fallback-cache",
+                            "title": "Fallback Podcast",
+                            "description": "Returned for the fallback token scope.",
+                            "language": "en",
+                            "rssUrl": "https://example.com/fallback-cache.xml",
+                            "powerScore": 60
+                          }
+                        ]
+                      }
+                    }
+                  }
+                  """
+                : """{"data":{"podcasts":{"data":[]}}}""";
+
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(payload)
+            });
+        });
+
+        var primaryClient = BuildClient(
+            handler,
+            new NudgeOptions { ApiKey = "primary-token", BaseUrl = NudgeOptions.DefaultBaseUrl },
+            cache,
+            "primary");
+        var fallbackClient = BuildClient(
+            handler,
+            new NudgeOptions { ApiKey = "fallback-token", BaseUrl = NudgeOptions.DefaultBaseUrl },
+            cache,
+            "fallback-1");
+
+        var primaryResults = await primaryClient.SearchAsync(["ai"], 30, 3);
+        var fallbackResults = await fallbackClient.SearchAsync(["ai"], 30, 3);
+
+        Assert.Empty(primaryResults);
+        Assert.Single(fallbackResults);
+        Assert.Equal(2, calls);
+        Assert.False(fallbackClient.LastSearchDiagnostics.CacheHit);
     }
 
     private static ListenNotesPodcastSearchClient BuildClient(

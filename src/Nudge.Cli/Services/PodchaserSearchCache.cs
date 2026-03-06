@@ -62,6 +62,16 @@ public sealed class PodchaserSearchCache
         lock (_gate)
         {
             var entries = LoadEntries();
+            if (results.Count == 0)
+            {
+                if (entries.Remove(cacheKey))
+                {
+                    SaveEntries(entries);
+                }
+
+                return;
+            }
+
             entries[cacheKey] = new CacheEntry
             {
                 StoredAtUtc = _timeProvider.GetUtcNow(),

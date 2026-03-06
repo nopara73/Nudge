@@ -9,9 +9,9 @@ public sealed class OutreachRepositoryStateTransitionTests
     [Fact]
     public async Task ContactedCooldown_Expires_AndRemainsContacted()
     {
-        using var appDataScope = new LocalAppDataScope();
+        using var databaseScope = new RepositoryDatabaseScope();
         var time = new MutableTimeProvider(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
-        var repository = new OutreachRepository(time);
+        var repository = new OutreachRepository(time, databaseScope.DatabasePath);
 
         var item = await SeedSingleTargetAsync(repository, time.GetUtcNow());
         await repository.MarkContactedAsync(item, string.Empty, string.Empty);
@@ -30,9 +30,9 @@ public sealed class OutreachRepositoryStateTransitionTests
     [Fact]
     public async Task RepliedYes_GetsThirtyDayFollowup_ThenBecomesActionable()
     {
-        using var appDataScope = new LocalAppDataScope();
+        using var databaseScope = new RepositoryDatabaseScope();
         var time = new MutableTimeProvider(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
-        var repository = new OutreachRepository(time);
+        var repository = new OutreachRepository(time, databaseScope.DatabasePath);
 
         var item = await SeedSingleTargetAsync(repository, time.GetUtcNow());
         await repository.MarkRepliedYesAsync(item, string.Empty, string.Empty);
@@ -52,9 +52,9 @@ public sealed class OutreachRepositoryStateTransitionTests
     [Fact]
     public async Task InterviewDone_IsTerminalAndHasNoCooldown()
     {
-        using var appDataScope = new LocalAppDataScope();
+        using var databaseScope = new RepositoryDatabaseScope();
         var time = new MutableTimeProvider(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
-        var repository = new OutreachRepository(time);
+        var repository = new OutreachRepository(time, databaseScope.DatabasePath);
 
         var item = await SeedSingleTargetAsync(repository, time.GetUtcNow());
         await repository.MarkInterviewDoneAsync(item, string.Empty, string.Empty);
@@ -106,22 +106,20 @@ public sealed class OutreachRepositoryStateTransitionTests
         public void Advance(TimeSpan delta) => _nowUtc = _nowUtc.Add(delta);
     }
 
-    private sealed class LocalAppDataScope : IDisposable
+    private sealed class RepositoryDatabaseScope : IDisposable
     {
-        private readonly string? _original;
         private readonly string _tempRoot;
+        public string DatabasePath { get; }
 
-        public LocalAppDataScope()
+        public RepositoryDatabaseScope()
         {
-            _original = Environment.GetEnvironmentVariable("LOCALAPPDATA", EnvironmentVariableTarget.Process);
             _tempRoot = Path.Combine(Path.GetTempPath(), $"Nudge.Tests.{Guid.NewGuid():N}");
             Directory.CreateDirectory(_tempRoot);
-            Environment.SetEnvironmentVariable("LOCALAPPDATA", _tempRoot, EnvironmentVariableTarget.Process);
+            DatabasePath = Path.Combine(_tempRoot, "nudge-ui.db");
         }
 
         public void Dispose()
         {
-            Environment.SetEnvironmentVariable("LOCALAPPDATA", _original, EnvironmentVariableTarget.Process);
             try
             {
                 if (Directory.Exists(_tempRoot))

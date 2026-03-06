@@ -337,7 +337,9 @@ public sealed class ListenNotesPodcastSearchClient(
                     execution.SuccessfulPageCount++;
                     var content = await response.Content.ReadAsStringAsync(cancellationToken);
                     var (mapped, sourceItemCount) = MapResults(content);
-                    var shouldRetryWithLegacyQuery = includeExtendedSignals && HasGraphQlErrors(content);
+                    var shouldRetryWithLegacyQuery = includeExtendedSignals &&
+                                                     mapped.Count == 0 &&
+                                                     HasGraphQlErrors(content);
                     // #region agent log
                     WriteDebugLog(
                         hypothesisId: "H2_H3_H4_mapping",

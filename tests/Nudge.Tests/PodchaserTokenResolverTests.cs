@@ -32,4 +32,34 @@ public sealed class PodchaserTokenResolverTests
 
         Assert.Equal(["primary", "fallback"], ordered);
     }
+
+    [Fact]
+    public void ResolveLabeled_PreservesConfiguredLabelsAfterDeduplication()
+    {
+        var options = new PodchaserOptions
+        {
+            Token = "primary-token",
+            FallbackTokens = ["primary-token", "fallback-token", "fallback-token-2"]
+        };
+
+        var ordered = PodchaserTokenResolver.ResolveLabeled(options);
+
+        Assert.Collection(
+            ordered,
+            item =>
+            {
+                Assert.Equal("primary", item.Label);
+                Assert.Equal("primary-token", item.Value);
+            },
+            item =>
+            {
+                Assert.Equal("fallback-1", item.Label);
+                Assert.Equal("fallback-token", item.Value);
+            },
+            item =>
+            {
+                Assert.Equal("fallback-2", item.Label);
+                Assert.Equal("fallback-token-2", item.Value);
+            });
+    }
 }

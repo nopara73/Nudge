@@ -14,17 +14,28 @@ public sealed class OutreachRepository
     private readonly string _connectionString;
     private readonly TimeProvider _timeProvider;
 
-    public OutreachRepository(TimeProvider timeProvider)
+    public OutreachRepository(TimeProvider timeProvider, string? databasePathOverride = null)
     {
         _timeProvider = timeProvider;
+        var databasePath = string.IsNullOrWhiteSpace(databasePathOverride)
+            ? BuildDefaultDatabasePath()
+            : Path.GetFullPath(databasePathOverride);
+        var databaseDirectory = Path.GetDirectoryName(databasePath);
+        if (!string.IsNullOrWhiteSpace(databaseDirectory))
+        {
+            Directory.CreateDirectory(databaseDirectory);
+        }
+
+        _connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString();
+        EnsureInitialized();
+    }
+
+    private static string BuildDefaultDatabasePath()
+    {
         var appDataPath = Path.Combine(
             Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
             "Nudge.Ui");
-        Directory.CreateDirectory(appDataPath);
-
-        var databasePath = Path.Combine(appDataPath, "nudge-ui.db");
-        _connectionString = new SqliteConnectionStringBuilder { DataSource = databasePath }.ToString();
-        EnsureInitialized();
+        return Path.Combine(appDataPath, "nudge-ui.db");
     }
 
     public async Task<long> SaveRunAsync(CliOutputEnvelope envelope, string commandPreview, string stdout, string stderr, CancellationToken cancellationToken = default)

@@ -6,6 +6,7 @@ using System.Linq;
 using System.Runtime.Versioning;
 using System.Text;
 using System.Text.Json;
+using System.Text.RegularExpressions;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
@@ -574,7 +575,7 @@ public partial class MainWindowViewModel : ViewModelBase
                 ApplyApiHealthFailure(ex.Message);
             }
             var tokenUsageNote = BuildPodchaserTokenUsageNote(cliRun.StdErr);
-            var quotaNote = BuildQuotaStatusNote();
+            var quotaNote = BuildQuotaStatusNote(cliRun.StdErr);
             RunStatus = CombineMessageParts(
                 $"Run ingested at {_timeProvider.GetUtcNow():u}. Loaded {cliRun.Envelope.Total} targets.",
                 tokenUsageNote,
@@ -1917,23 +1918,32 @@ public partial class MainWindowViewModel : ViewModelBase
             return "Run used a fallback Podchaser token.";
         }
 
-        if (stderr.Contains("Info: Podchaser search [primary]", StringComparison.OrdinalIgnoreCase))
+        var usedTokenLabel = TryExtractPodchaserAttemptLabel(stderr);
+        if (string.Equals(usedTokenLabel, "Primary", StringComparison.Ordinal))
         {
             return "Run used the primary Podchaser token.";
+        }
+
+        if (!string.IsNullOrWhiteSpace(usedTokenLabel))
+        {
+            return $"Run used {usedTokenLabel.ToLowerInvariant()} Podchaser token.";
         }
 
         return string.Empty;
     }
 
-    private string BuildQuotaStatusNote()
+    private string BuildQuotaStatusNote(string stderr)
     {
-        var primary = ApiHealthTokens.FirstOrDefault(token => token.Label.Equals("Primary", StringComparison.OrdinalIgnoreCase));
-        if (primary is not null)
+        var usedTokenLabel = TryExtractPodchaserAttemptLabel(stderr);
+        if (string.IsNullOrWhiteSpace(usedTokenLabel))
         {
-            return $"{primary.Label} now shows {primary.RemainingDisplay.ToLowerInvariant()}.";
+            return string.Empty;
         }
 
-        return string.Empty;
+        var token = ApiHealthTokens.FirstOrDefault(item => item.Label.Equals(usedTokenLabel, StringComparison.OrdinalIgnoreCase));
+        return token is null
+            ? string.Empty
+            : $"{token.Label} now shows {token.RemainingDisplay.ToLowerInvariant()}.";
     }
 
     private string BuildApiHealthStatusMessage()
@@ -1947,6 +1957,32 @@ public partial class MainWindowViewModel : ViewModelBase
             " ",
             parts.Where(part => !string.IsNullOrWhiteSpace(part))
                  .Select(part => part.Trim()));
+    }
+
+    private static string? TryExtractPodchaserAttemptLabel(string stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr))
+        {
+            return null;
+        }
+
+        var match = Regex.Match(
+            stderr,
+            @"Info:\s+Podchaser search \[(primary|fallback-(\d+))\]",
+            RegexOptions.IgnoreCase | RegexOptions.CultureInvariant);
+        if (!match.Success)
+        {
+            return null;
+        }
+
+        var rawLabel = match.Groups[1].Value;
+        if (rawLabel.Equals("primary", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Primary";
+        }
+
+        var fallbackIndex = match.Groups[2].Value;
+        return string.IsNullOrWhiteSpace(fallbackIndex) ? null : $"Fallback {fallbackIndex}";
     }
 
     private void RefreshCommandPreview()
