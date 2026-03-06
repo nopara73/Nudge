@@ -39,6 +39,7 @@ public sealed class MockPodcastSearchClient : IPodcastSearchClient
     public Task<IReadOnlyList<PodcastSearchResult>> SearchAsync(
         IReadOnlyList<string> keywords,
         int publishedAfterDays,
+        int targetResultCount,
         CancellationToken cancellationToken = default)
     {
         var normalizedKeywords = keywords

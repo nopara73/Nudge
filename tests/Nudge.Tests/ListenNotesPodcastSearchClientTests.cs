@@ -49,7 +49,7 @@ public sealed class ListenNotesPodcastSearchClientTests
         });
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "token-part-1.token-part-2.token-part-3", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["ai", "fitness"], 45);
+        var results = await client.SearchAsync(["ai", "fitness"], 45, 3);
 
         Assert.NotNull(capturedRequest);
         Assert.Equal(HttpMethod.Post, capturedRequest!.Method);
@@ -105,7 +105,7 @@ public sealed class ListenNotesPodcastSearchClientTests
         });
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["ai"], 30);
+        var results = await client.SearchAsync(["ai"], 30, 3);
 
         Assert.Equal(2, calls);
         Assert.Single(results);
@@ -150,7 +150,7 @@ public sealed class ListenNotesPodcastSearchClientTests
             }));
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["ai"], 30);
+        var results = await client.SearchAsync(["ai"], 30, 3);
 
         Assert.Single(results);
         Assert.Equal("podchaser:pod-42", results[0].Id);
@@ -211,7 +211,7 @@ public sealed class ListenNotesPodcastSearchClientTests
         });
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["ai"], 30);
+        var results = await client.SearchAsync(["ai"], 30, 3);
 
         Assert.Equal(2, calls);
         Assert.Equal(2, requestBodies.Count);
@@ -237,7 +237,7 @@ public sealed class ListenNotesPodcastSearchClientTests
             }));
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["ai"], 30);
+        var results = await client.SearchAsync(["ai"], 30, 3);
 
         Assert.Empty(results);
         Assert.True(client.WasPointBudgetExceeded);
@@ -253,7 +253,7 @@ public sealed class ListenNotesPodcastSearchClientTests
             }));
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["ai"], 30);
+        var results = await client.SearchAsync(["ai"], 30, 3);
 
         Assert.Empty(results);
         Assert.True(client.WasTokenRejected);
@@ -285,7 +285,7 @@ public sealed class ListenNotesPodcastSearchClientTests
             }));
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["ai"], 30);
+        var results = await client.SearchAsync(["ai"], 30, 3);
 
         Assert.Single(results);
         Assert.Equal("podchaser:pod-low-confidence", results[0].Id);
@@ -342,7 +342,7 @@ public sealed class ListenNotesPodcastSearchClientTests
         });
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["ai"], 30);
+        var results = await client.SearchAsync(["ai"], 30, 16);
 
         Assert.Equal(2, calls);
         Assert.Equal(51, results.Count);
@@ -404,7 +404,7 @@ public sealed class ListenNotesPodcastSearchClientTests
         });
 
         var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
-        var results = await client.SearchAsync(["alpha", "beta"], 30);
+        var results = await client.SearchAsync(["alpha", "beta"], 30, 3);
 
         Assert.Equal(2, calls);
         Assert.Equal(2, results.Count);
@@ -412,7 +412,200 @@ public sealed class ListenNotesPodcastSearchClientTests
         Assert.Contains(results, r => r.Id == "podchaser:pod-beta");
     }
 
-    private static ListenNotesPodcastSearchClient BuildClient(HttpMessageHandler handler, NudgeOptions options)
+    [Fact]
+    public async Task SearchAsync_StopsAfterCandidateBudgetIsFilled()
+    {
+        var calls = 0;
+        var handler = new DelegateHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            calls++;
+            var requestBody = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);
+            var term = ExtractSearchTerm(requestBody);
+            var items = term == "alpha"
+                ? Enumerable.Range(1, 25)
+                    .Select(i => $$"""
+                    {
+                      "id": "pod-alpha-{{i}}",
+                      "title": "Alpha Podcast {{i}}",
+                      "description": "Alpha result {{i}}.",
+                      "language": "en",
+                      "rssUrl": "https://example.com/alpha-{{i}}.xml",
+                      "powerScore": 40
+                    }
+                    """)
+                : [
+                    """
+                    {
+                      "id": "pod-beta",
+                      "title": "Beta Podcast",
+                      "description": "Beta result.",
+                      "language": "en",
+                      "rssUrl": "https://example.com/beta.xml",
+                      "powerScore": 40
+                    }
+                    """
+                ];
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    $$"""
+                    {
+                      "data": {
+                        "podcasts": {
+                          "data": [{{string.Join(",", items)}}]
+                        }
+                      }
+                    }
+                    """)
+            };
+        });
+
+        var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
+        var results = await client.SearchAsync(["alpha", "beta"], 30, 3);
+
+        Assert.Equal(1, calls);
+        Assert.Equal(15, results.Count);
+        Assert.All(results, result => Assert.StartsWith("podchaser:pod-alpha-", result.Id));
+        Assert.True(client.LastSearchDiagnostics.EarlyExitTriggered);
+    }
+
+    [Fact]
+    public async Task SearchAsync_StopsPagingWhenEnoughLikelyViableCandidatesExist()
+    {
+        var calls = 0;
+        var handler = new DelegateHttpMessageHandler(async (request, cancellationToken) =>
+        {
+            calls++;
+            var requestBody = request.Content is null ? string.Empty : await request.Content.ReadAsStringAsync(cancellationToken);
+            var page = ExtractPage(requestBody);
+            if (page > 0)
+            {
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(
+                        """
+                        {
+                          "data": {
+                            "podcasts": {
+                              "data": [
+                                {
+                                  "id": "pod-page-2",
+                                  "title": "Second Page Podcast",
+                                  "description": "Should not be fetched.",
+                                  "language": "en",
+                                  "rssUrl": "https://example.com/page-2.xml",
+                                  "powerScore": 40
+                                }
+                              ]
+                            }
+                          }
+                        }
+                        """)
+                };
+            }
+
+            var alignedItems = Enumerable.Range(1, 17)
+                .Select(i => $$"""
+                {
+                  "id": "pod-aligned-{{i}}",
+                  "title": "AI Podcast {{i}}",
+                  "description": "AI result {{i}}.",
+                  "language": "en",
+                  "rssUrl": "https://example.com/aligned-{{i}}.xml",
+                  "powerScore": 40
+                }
+                """);
+            var unsupportedItems = Enumerable.Range(18, 33)
+                .Select(i => $$"""
+                {
+                  "id": "pod-unsupported-{{i}}",
+                  "title": "AI Podcast {{i}}",
+                  "description": "AI result {{i}}.",
+                  "language": "fr",
+                  "rssUrl": "https://example.com/unsupported-{{i}}.xml",
+                  "powerScore": 40
+                }
+                """);
+
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    $$"""
+                    {
+                      "data": {
+                        "podcasts": {
+                          "data": [{{string.Join(",", alignedItems.Concat(unsupportedItems))}}]
+                        }
+                      }
+                    }
+                    """)
+            };
+        });
+
+        var client = BuildClient(handler, new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl });
+        var results = await client.SearchAsync(["ai"], 30, 16);
+
+        Assert.Equal(1, calls);
+        Assert.Equal(50, results.Count);
+        Assert.True(client.LastSearchDiagnostics.EarlyExitTriggered);
+        Assert.False(client.LastSearchDiagnostics.CacheHit);
+    }
+
+    [Fact]
+    public async Task SearchAsync_UsesCacheForRepeatedIdenticalQueries()
+    {
+        var calls = 0;
+        var cacheFilePath = Path.Combine(Path.GetTempPath(), "nudge-tests", Guid.NewGuid().ToString("N"), "podchaser-cache.json");
+        var cache = new PodchaserSearchCache(cacheFilePath, TimeProvider.System, TimeSpan.FromHours(1));
+        var handler = new DelegateHttpMessageHandler((_, _) =>
+        {
+            calls++;
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(
+                    """
+                    {
+                      "data": {
+                        "podcasts": {
+                          "data": [
+                            {
+                              "id": "pod-cache",
+                              "title": "Cached Podcast",
+                              "description": "First response should be reused.",
+                              "language": "en",
+                              "rssUrl": "https://example.com/cached.xml",
+                              "powerScore": 55
+                            }
+                          ]
+                        }
+                      }
+                    }
+                    """)
+            });
+        });
+
+        var client = BuildClient(
+            handler,
+            new NudgeOptions { ApiKey = "api-key-value", BaseUrl = NudgeOptions.DefaultBaseUrl },
+            cache,
+            "Development");
+
+        var firstResults = await client.SearchAsync(["ai"], 30, 3);
+        var secondResults = await client.SearchAsync(["ai"], 30, 3);
+
+        Assert.Single(firstResults);
+        Assert.Single(secondResults);
+        Assert.Equal(1, calls);
+        Assert.True(client.LastSearchDiagnostics.CacheHit);
+        Assert.Equal(1, client.LastSearchDiagnostics.RawCandidatesReturned);
+    }
+
+    private static ListenNotesPodcastSearchClient BuildClient(
+        HttpMessageHandler handler,
+        NudgeOptions options,
+        PodchaserSearchCache? searchCache = null,
+        string? tokenScope = null)
     {
         var httpClient = new HttpClient(handler)
         {
@@ -420,7 +613,7 @@ public sealed class ListenNotesPodcastSearchClientTests
             Timeout = TimeSpan.FromSeconds(10)
         };
 
-        return new ListenNotesPodcastSearchClient(httpClient, options);
+        return new ListenNotesPodcastSearchClient(httpClient, options, searchCache, tokenScope);
     }
 
     private static int ExtractPage(string requestBody)

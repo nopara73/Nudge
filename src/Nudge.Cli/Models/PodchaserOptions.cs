@@ -4,8 +4,6 @@ public sealed record PodchaserOptions
 {
     public const string SectionName = "Podchaser";
 
-    public string? DevelopmentToken { get; init; }
-    public string? ProductionToken { get; init; }
-    public string[]? DevelopmentFallbackTokens { get; init; }
-    public string[]? ProductionFallbackTokens { get; init; }
+    public string? Token { get; init; }
+    public string[]? FallbackTokens { get; init; }
 }

@@ -65,6 +65,7 @@ public partial class MainWindowViewModel : ViewModelBase
     ];
 
     private readonly CliRunnerService _cliRunner;
+    private readonly PodchaserQuotaService _podchaserQuotaService;
     private readonly OutreachRepository _repository;
     private readonly SessionStateStore _sessionStateStore;
     private readonly EpisodeTranscriptAcquisitionService _transcriptAcquisitionService;
@@ -75,21 +76,25 @@ public partial class MainWindowViewModel : ViewModelBase
         QueueBucket.Waiting,
         QueueBucket.Done
     ];
+    private ApiHealthLevel _apiHealthLevel = ApiHealthLevel.Unknown;
     private bool _isSynchronizingOutreachOutcomeSelection;
 
     public MainWindowViewModel(
         CliRunnerService cliRunner,
+        PodchaserQuotaService podchaserQuotaService,
         OutreachRepository repository,
         SessionStateStore sessionStateStore,
         EpisodeTranscriptAcquisitionService transcriptAcquisitionService,
         TimeProvider timeProvider)
     {
         _cliRunner = cliRunner;
+        _podchaserQuotaService = podchaserQuotaService;
         _repository = repository;
         _sessionStateStore = sessionStateStore;
         _transcriptAcquisitionService = transcriptAcquisitionService;
         _timeProvider = timeProvider;
 
+        ApiHealthTokens = [];
         QueueItems = [];
         QueueGroups = [];
         HistoryItems = [];
@@ -102,7 +107,6 @@ public partial class MainWindowViewModel : ViewModelBase
 
         var session = _sessionStateStore.Load();
         CurrentViewIndex = ParseViewIndex(session.LastView);
-        RunStatus = "Using nudge.local.json. Run when ready.";
         RunKeywords = string.IsNullOrWhiteSpace(session.RunKeywords)
             ? string.Join(", ", DefaultRunKeywords)
             : session.RunKeywords;
@@ -118,6 +122,7 @@ public partial class MainWindowViewModel : ViewModelBase
         RunMaxReach = string.IsNullOrWhiteSpace(session.RunMaxReach)
             ? DefaultMaxReachPercent.ToString("0", CultureInfo.InvariantCulture)
             : session.RunMaxReach;
+        RunStatus = "Using nudge.local.json. Run when ready.";
         EvaluateRunConfigurationState();
         _ = LoadInitialDataAsync();
     }
@@ -127,6 +132,7 @@ public partial class MainWindowViewModel : ViewModelBase
     public ObservableCollection<HistoryEvent> HistoryItems { get; }
     public ObservableCollection<HistoryEvent> FilteredHistoryItems { get; }
     public ObservableCollection<string> SelectedNicheFitHighlights { get; }
+    public ObservableCollection<PodchaserQuotaTokenDisplayItem> ApiHealthTokens { get; }
     public IReadOnlyList<SnoozePresetOption> SnoozePresetOptions { get; }
     public IReadOnlyList<OutreachOutcomeOption> OutreachOutcomeOptions { get; }
 
@@ -173,6 +179,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [NotifyCanExecuteChangedFor(nameof(StartFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(ConfirmFullResetCommand))]
     [NotifyCanExecuteChangedFor(nameof(CancelFullResetCommand))]
+    [NotifyCanExecuteChangedFor(nameof(RefreshApiHealthCommand))]
     [NotifyCanExecuteChangedFor(nameof(OpenFeedUrlCommand))]
     [NotifyCanExecuteChangedFor(nameof(ResetOutreachOutcomeCommand))]
     private bool isBusy;
@@ -217,6 +224,30 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string runConfigMessage = string.Empty;
+
+    [ObservableProperty]
+    private string apiHealthSummary = "Quota has not been checked yet.";
+
+    [ObservableProperty]
+    private string apiHealthGuidance = "Use Check Now for a lightweight preview request. Token secrets stay hidden.";
+
+    [ObservableProperty]
+    private string apiHealthLastCheckedDisplay = "Last checked: never";
+
+    [ObservableProperty]
+    private string apiHealthCardBackground = "#F9FAFB";
+
+    [ObservableProperty]
+    private string apiHealthCardBorderBrush = "#E5E7EB";
+
+    [ObservableProperty]
+    private string apiHealthBadgeText = "Unknown";
+
+    [ObservableProperty]
+    private string apiHealthBadgeBackground = "#E5E7EB";
+
+    [ObservableProperty]
+    private string apiHealthBadgeForeground = "#374151";
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(StartFullResetCommand))]
@@ -318,6 +349,10 @@ public partial class MainWindowViewModel : ViewModelBase
         FilteredHistoryItems.Count == 0
             ? "No history events match this filter."
             : string.Empty;
+
+    public bool HasApiHealthTokens => ApiHealthTokens.Count > 0;
+
+    public string ApiHealthButtonText => HasApiHealthTokens ? "Refresh" : "Check Now";
 
     public string SelectedEpisodesEmptyMessage =>
         SelectedRecentEpisodes.Count == 0
@@ -440,6 +475,7 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(IsSnoozeSectionEnabled));
         OnPropertyChanged(nameof(IsSnoozeUnavailable));
         OnPropertyChanged(nameof(SnoozeUnavailableReason));
+        OnPropertyChanged(nameof(ApiHealthButtonText));
     }
 
     partial void OnSelectedSnoozePresetChanged(SnoozePresetOption? value)
@@ -529,7 +565,20 @@ public partial class MainWindowViewModel : ViewModelBase
             }
 
             await _repository.SaveRunAsync(cliRun.Envelope, cliRun.CommandPreview, cliRun.StdOut, cliRun.StdErr);
-            RunStatus = $"Run ingested at {_timeProvider.GetUtcNow():u}. Loaded {cliRun.Envelope.Total} targets.";
+            try
+            {
+                await RefreshApiHealthCoreAsync(updateRunStatus: false);
+            }
+            catch (Exception ex)
+            {
+                ApplyApiHealthFailure(ex.Message);
+            }
+            var tokenUsageNote = BuildPodchaserTokenUsageNote(cliRun.StdErr);
+            var quotaNote = BuildQuotaStatusNote();
+            RunStatus = CombineMessageParts(
+                $"Run ingested at {_timeProvider.GetUtcNow():u}. Loaded {cliRun.Envelope.Total} targets.",
+                tokenUsageNote,
+                quotaNote);
 
             await RefreshQueueAsync();
             await RefreshHistoryAsync();
@@ -548,6 +597,31 @@ public partial class MainWindowViewModel : ViewModelBase
     private bool CanRunFromConfig()
     {
         return !IsBusy && TryBuildRunProfile().Success;
+    }
+
+    [RelayCommand(CanExecute = nameof(CanRefreshApiHealth))]
+    private async Task RefreshApiHealthAsync()
+    {
+        IsBusy = true;
+        try
+        {
+            RunStatus = "Checking Podchaser API health...";
+            await RefreshApiHealthCoreAsync(updateRunStatus: true);
+        }
+        catch (Exception ex)
+        {
+            ApplyApiHealthFailure(ex.Message);
+            RunStatus = $"API health check failed: {ex.Message}";
+        }
+        finally
+        {
+            IsBusy = false;
+        }
+    }
+
+    private bool CanRefreshApiHealth()
+    {
+        return !IsBusy;
     }
 
     [RelayCommand]
@@ -1325,7 +1399,14 @@ public partial class MainWindowViewModel : ViewModelBase
 
         return (
             true,
-            new RunConfigProfile(parsedKeywords, parsedDays, parsedTop, parsedMinReachPercent / 100.0, parsedMaxReachPercent / 100.0, false, false),
+            new RunConfigProfile(
+                parsedKeywords,
+                parsedDays,
+                parsedTop,
+                parsedMinReachPercent / 100.0,
+                parsedMaxReachPercent / 100.0,
+                false,
+                false),
             string.Empty);
     }
 
@@ -1606,6 +1687,268 @@ public partial class MainWindowViewModel : ViewModelBase
         return new DateTimeOffset(localDate, localOffset).ToUniversalTime();
     }
 
+    private async Task RefreshApiHealthCoreAsync(bool updateRunStatus)
+    {
+        try
+        {
+            var snapshot = await _podchaserQuotaService.GetSnapshotAsync();
+            ApplyApiHealthSnapshot(snapshot);
+            if (updateRunStatus)
+            {
+                RunStatus = BuildApiHealthStatusMessage();
+            }
+        }
+        catch
+        {
+            ApiHealthLastCheckedDisplay = "Last checked: failed";
+            throw;
+        }
+    }
+
+    private void ApplyApiHealthSnapshot(PodchaserQuotaSnapshot snapshot)
+    {
+        ApiHealthTokens.Clear();
+        foreach (var token in snapshot.Tokens.Select(BuildApiHealthTokenDisplayItem))
+        {
+            ApiHealthTokens.Add(token);
+        }
+
+        var primary = snapshot.Tokens.FirstOrDefault();
+        var healthiestFallback = snapshot.Tokens
+            .Skip(1)
+            .OrderByDescending(token => token.RemainingPoints ?? -1)
+            .FirstOrDefault();
+
+        _apiHealthLevel = DetermineApiHealthLevel(primary, healthiestFallback);
+        switch (_apiHealthLevel)
+        {
+            case ApiHealthLevel.Healthy:
+                ApiHealthSummary = "Primary token looks healthy.";
+                ApiHealthGuidance = "Runs should use the primary token normally.";
+                ApiHealthCardBackground = "#ECFDF5";
+                ApiHealthCardBorderBrush = "#A7F3D0";
+                ApiHealthBadgeText = "Healthy";
+                ApiHealthBadgeBackground = "#10B981";
+                ApiHealthBadgeForeground = "White";
+                break;
+            case ApiHealthLevel.Low:
+                ApiHealthSummary = BuildLowHealthSummary(primary, healthiestFallback);
+                ApiHealthGuidance = healthiestFallback?.RemainingPoints is > 0
+                    ? "Primary is getting tight, but a fallback token is ready if larger runs trip the limit."
+                    : "Primary is getting tight. Smaller runs are safer until quota recovers.";
+                ApiHealthCardBackground = "#FFFBEB";
+                ApiHealthCardBorderBrush = "#FCD34D";
+                ApiHealthBadgeText = "Low";
+                ApiHealthBadgeBackground = "#F59E0B";
+                ApiHealthBadgeForeground = "#111827";
+                break;
+            case ApiHealthLevel.Critical:
+                ApiHealthSummary = BuildCriticalHealthSummary(primary, healthiestFallback);
+                ApiHealthGuidance = healthiestFallback?.RemainingPoints is > 0
+                    ? "Primary is nearly exhausted. Expect fallback to carry most live searches."
+                    : "All configured tokens are low or failing. Reduce run size or wait for quota reset.";
+                ApiHealthCardBackground = "#FEF2F2";
+                ApiHealthCardBorderBrush = "#FCA5A5";
+                ApiHealthBadgeText = "Critical";
+                ApiHealthBadgeBackground = "#DC2626";
+                ApiHealthBadgeForeground = "White";
+                break;
+            default:
+                ApiHealthSummary = snapshot.Tokens.Count == 0
+                    ? "No Podchaser tokens were found in nudge.local.json."
+                    : "Quota could not be confirmed for the configured tokens.";
+                ApiHealthGuidance = "Use Check Now for a lightweight preview request. Token secrets stay hidden.";
+                ApiHealthCardBackground = "#F9FAFB";
+                ApiHealthCardBorderBrush = "#E5E7EB";
+                ApiHealthBadgeText = "Unknown";
+                ApiHealthBadgeBackground = "#E5E7EB";
+                ApiHealthBadgeForeground = "#374151";
+                break;
+        }
+
+        var checkedLocal = TimeZoneInfo.ConvertTime(snapshot.CheckedAtUtc, TimeZoneInfo.Local);
+        ApiHealthLastCheckedDisplay = $"Last checked: {checkedLocal:yyyy-MM-dd HH:mm:ss}";
+        OnPropertyChanged(nameof(HasApiHealthTokens));
+        OnPropertyChanged(nameof(ApiHealthButtonText));
+    }
+
+    private void ApplyApiHealthFailure(string message)
+    {
+        ApiHealthTokens.Clear();
+        _apiHealthLevel = ApiHealthLevel.Unknown;
+        ApiHealthSummary = "API health check failed.";
+        ApiHealthGuidance = string.IsNullOrWhiteSpace(message)
+            ? "Try again in a moment."
+            : message;
+        ApiHealthLastCheckedDisplay = "Last checked: failed";
+        ApiHealthCardBackground = "#F9FAFB";
+        ApiHealthCardBorderBrush = "#E5E7EB";
+        ApiHealthBadgeText = "Unknown";
+        ApiHealthBadgeBackground = "#E5E7EB";
+        ApiHealthBadgeForeground = "#374151";
+        OnPropertyChanged(nameof(HasApiHealthTokens));
+        OnPropertyChanged(nameof(ApiHealthButtonText));
+    }
+
+    private static PodchaserQuotaTokenDisplayItem BuildApiHealthTokenDisplayItem(PodchaserQuotaTokenStatus token)
+    {
+        var level = DetermineTokenHealthLevel(token);
+        var (badgeText, badgeBackground, badgeForeground) = level switch
+        {
+            ApiHealthLevel.Healthy => ("Healthy", "#10B981", "White"),
+            ApiHealthLevel.Low => ("Low", "#F59E0B", "#111827"),
+            ApiHealthLevel.Critical => ("Critical", "#DC2626", "White"),
+            _ => ("Unknown", "#E5E7EB", "#374151")
+        };
+
+        var remainingDisplay = token.RemainingPoints.HasValue
+            ? $"{token.RemainingPoints.Value} pts left"
+            : "Remaining unknown";
+
+        return new PodchaserQuotaTokenDisplayItem(
+            token.Label,
+            remainingDisplay,
+            token.Detail,
+            badgeText,
+            badgeBackground,
+            badgeForeground);
+    }
+
+    private static ApiHealthLevel DetermineApiHealthLevel(
+        PodchaserQuotaTokenStatus? primary,
+        PodchaserQuotaTokenStatus? healthiestFallback)
+    {
+        var primaryLevel = DetermineTokenHealthLevel(primary);
+        if (primaryLevel == ApiHealthLevel.Healthy)
+        {
+            return ApiHealthLevel.Healthy;
+        }
+
+        var fallbackLevel = DetermineTokenHealthLevel(healthiestFallback);
+        if (primaryLevel == ApiHealthLevel.Critical && fallbackLevel != ApiHealthLevel.Healthy)
+        {
+            return ApiHealthLevel.Critical;
+        }
+
+        if (primaryLevel == ApiHealthLevel.Unknown && fallbackLevel == ApiHealthLevel.Unknown)
+        {
+            return ApiHealthLevel.Unknown;
+        }
+
+        return primaryLevel == ApiHealthLevel.Unknown && fallbackLevel == ApiHealthLevel.Healthy
+            ? ApiHealthLevel.Low
+            : primaryLevel;
+    }
+
+    private static ApiHealthLevel DetermineTokenHealthLevel(PodchaserQuotaTokenStatus? token)
+    {
+        if (token is null)
+        {
+            return ApiHealthLevel.Unknown;
+        }
+
+        if (!token.IsSuccessful)
+        {
+            return token.StatusCode is 401 or 403 ? ApiHealthLevel.Critical : ApiHealthLevel.Unknown;
+        }
+
+        if (!token.RemainingPoints.HasValue)
+        {
+            return ApiHealthLevel.Unknown;
+        }
+
+        return token.RemainingPoints.Value switch
+        {
+            <= 100 => ApiHealthLevel.Critical,
+            <= 1000 => ApiHealthLevel.Low,
+            _ => ApiHealthLevel.Healthy
+        };
+    }
+
+    private static string BuildLowHealthSummary(
+        PodchaserQuotaTokenStatus? primary,
+        PodchaserQuotaTokenStatus? healthiestFallback)
+    {
+        if (primary?.RemainingPoints is > 0 && healthiestFallback?.RemainingPoints is > 0)
+        {
+            return $"Primary is low at {primary.RemainingPoints.Value} pts, but {healthiestFallback.Label.ToLowerInvariant()} is available.";
+        }
+
+        if (primary?.RemainingPoints is > 0)
+        {
+            return $"Primary token is low at {primary.RemainingPoints.Value} pts.";
+        }
+
+        return "Primary token is unavailable, but a fallback token is available.";
+    }
+
+    private static string BuildCriticalHealthSummary(
+        PodchaserQuotaTokenStatus? primary,
+        PodchaserQuotaTokenStatus? healthiestFallback)
+    {
+        if (primary?.RemainingPoints is >= 0 && healthiestFallback?.RemainingPoints is > 0)
+        {
+            return $"Primary is critical at {primary.RemainingPoints.Value} pts. {healthiestFallback.Label} should absorb live traffic.";
+        }
+
+        if (primary?.RemainingPoints is >= 0)
+        {
+            return $"Primary token is nearly exhausted at {primary.RemainingPoints.Value} pts.";
+        }
+
+        return "Configured tokens are low or failing.";
+    }
+
+    private static string BuildPodchaserTokenUsageNote(string stderr)
+    {
+        if (string.IsNullOrWhiteSpace(stderr))
+        {
+            return string.Empty;
+        }
+
+        if (stderr.Contains("All Podchaser tokens were exhausted", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Podchaser exhausted all tokens and returned mock fallback results.";
+        }
+
+        if (stderr.Contains("fallback-", StringComparison.OrdinalIgnoreCase) ||
+            stderr.Contains("Primary Podchaser token failed", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Run used a fallback Podchaser token.";
+        }
+
+        if (stderr.Contains("Info: Podchaser search [primary]", StringComparison.OrdinalIgnoreCase))
+        {
+            return "Run used the primary Podchaser token.";
+        }
+
+        return string.Empty;
+    }
+
+    private string BuildQuotaStatusNote()
+    {
+        var primary = ApiHealthTokens.FirstOrDefault(token => token.Label.Equals("Primary", StringComparison.OrdinalIgnoreCase));
+        if (primary is not null)
+        {
+            return $"{primary.Label} now shows {primary.RemainingDisplay.ToLowerInvariant()}.";
+        }
+
+        return string.Empty;
+    }
+
+    private string BuildApiHealthStatusMessage()
+    {
+        return CombineMessageParts(ApiHealthSummary, ApiHealthGuidance);
+    }
+
+    private static string CombineMessageParts(params string[] parts)
+    {
+        return string.Join(
+            " ",
+            parts.Where(part => !string.IsNullOrWhiteSpace(part))
+                 .Select(part => part.Trim()));
+    }
+
     private void RefreshCommandPreview()
     {
         CommandPreview = _cliRunner.BuildCommandPreview(BuildRunProfile());
@@ -1665,6 +2008,14 @@ public partial class MainWindowViewModel : ViewModelBase
         Actionable = 0,
         Waiting = 1,
         Done = 2
+    }
+
+    private enum ApiHealthLevel
+    {
+        Unknown = 0,
+        Healthy = 1,
+        Low = 2,
+        Critical = 3
     }
 
     private void SyncSelectedOutreachOutcomeToState(OutreachState state)

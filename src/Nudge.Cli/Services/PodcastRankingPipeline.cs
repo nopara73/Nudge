@@ -42,7 +42,11 @@ public sealed class PodcastRankingPipeline(
     {
         var warnings = new List<string>();
         var diagnostics = new List<string>();
-        var candidates = await _searchClient.SearchAsync(arguments.Keywords, arguments.PublishedAfterDays, cancellationToken);
+        var candidates = await _searchClient.SearchAsync(
+            arguments.Keywords,
+            arguments.PublishedAfterDays,
+            arguments.Top,
+            cancellationToken);
         AddReachSanitySignals(candidates, warnings, diagnostics, includeDebugDiagnostics);
         if (includeDebugDiagnostics)
         {

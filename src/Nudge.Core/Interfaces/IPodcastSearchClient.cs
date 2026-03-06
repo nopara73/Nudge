@@ -7,5 +7,6 @@ public interface IPodcastSearchClient
     Task<IReadOnlyList<PodcastSearchResult>> SearchAsync(
         IReadOnlyList<string> keywords,
         int publishedAfterDays,
+        int targetResultCount,
         CancellationToken cancellationToken = default);
 }

@@ -8,14 +8,20 @@ using Nudge.Core.Models;
 
 namespace Nudge.Cli.Services;
 
-public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeOptions options) : IPodcastSearchClient
+public sealed class ListenNotesPodcastSearchClient(
+    HttpClient httpClient,
+    NudgeOptions options,
+    PodchaserSearchCache? searchCache = null,
+    string? tokenScope = null) : IPodcastSearchClient
 {
     private const string SearchPath = "graphql";
     private const string UserAgent = "Nudge-Podcast-Bot/1.0";
     private const int MaxResults = 50;
+    private const int SinglePageMaxResults = 25;
     private const int LowCostMaxResults = 10;
-    private const int MaxPages = 20;
-    private const int MaxCandidateResults = 500;
+    private const int MaxPagesPerTerm = 3;
+    private const int MinCandidateTarget = 15;
+    private const int MaxCandidateTarget = 90;
     private const int FirstPageIndex = 0;
     private const string SearchPodcastsQuery =
         """
@@ -65,33 +71,47 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         """;
     private readonly HttpClient _httpClient = httpClient;
     private readonly NudgeOptions _options = options;
+    private readonly PodchaserSearchCache? _searchCache = searchCache;
+    private readonly string _tokenScope = string.IsNullOrWhiteSpace(tokenScope) ? "default" : tokenScope.Trim();
+    private PodchaserSearchDiagnostics _lastSearchDiagnostics = PodchaserSearchDiagnostics.Empty;
     private int _pointBudgetExceeded;
     private int _tokenRejected;
 
     public bool WasPointBudgetExceeded => Volatile.Read(ref _pointBudgetExceeded) == 1;
     public bool WasTokenRejected => Volatile.Read(ref _tokenRejected) == 1;
+    public PodchaserSearchDiagnostics LastSearchDiagnostics => _lastSearchDiagnostics;
 
     public async Task<IReadOnlyList<PodcastSearchResult>> SearchAsync(
         IReadOnlyList<string> keywords,
         int publishedAfterDays,
+        int targetResultCount,
         CancellationToken cancellationToken = default)
     {
+        var execution = new SearchExecutionState();
         try
         {
-            return await SearchWithRetryAsync(keywords, cancellationToken);
+            var results = await SearchWithRetryAsync(keywords, publishedAfterDays, targetResultCount, execution, cancellationToken);
+            execution.RawCandidatesReturned = results.Count;
+            _lastSearchDiagnostics = execution.ToDiagnostics();
+            return results;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {
+            _lastSearchDiagnostics = execution.ToDiagnostics();
             return Array.Empty<PodcastSearchResult>();
         }
         catch (Exception)
         {
+            _lastSearchDiagnostics = execution.ToDiagnostics();
             return Array.Empty<PodcastSearchResult>();
         }
     }
 
     private async Task<IReadOnlyList<PodcastSearchResult>> SearchWithRetryAsync(
         IReadOnlyList<string> keywords,
+        int publishedAfterDays,
+        int targetResultCount,
+        SearchExecutionState execution,
         CancellationToken cancellationToken)
     {
         var terms = keywords
@@ -103,6 +123,11 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         {
             terms = [string.Empty];
         }
+        var budget = BuildBudget(terms.Length, targetResultCount);
+        execution.Executed = true;
+        execution.KeywordCount = terms.Length;
+        execution.TargetResultCount = Math.Max(1, targetResultCount);
+        execution.TargetCandidateCount = budget.TargetCandidateCount;
         // #region agent log
         WriteDebugLog(
             hypothesisId: "H2_page_start_or_empty_terms",
@@ -118,7 +143,15 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
             runId: "initial");
         // #endregion
 
-        var accumulated = new List<PodcastSearchResult>(MaxCandidateResults);
+        var cacheKey = BuildCacheKey(terms, publishedAfterDays, budget.TargetCandidateCount);
+        if (_searchCache is not null && _searchCache.TryGet(cacheKey, out var cachedResults))
+        {
+            execution.CacheHit = true;
+            execution.RawCandidatesReturned = cachedResults.Count;
+            return cachedResults;
+        }
+
+        var accumulated = new List<PodcastSearchResult>(budget.TargetCandidateCount);
         var seenIds = new HashSet<string>(StringComparer.Ordinal);
         var includeExtendedSignals = true;
         foreach (var term in terms)
@@ -126,6 +159,8 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
             var (termResults, switchedToLegacy) = await SearchTermWithPagingAsync(
                 term,
                 includeExtendedSignals,
+                budget,
+                execution,
                 cancellationToken);
             // #region agent log
             WriteDebugLogB9(
@@ -156,33 +191,40 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
                 }
 
                 accumulated.Add(result);
-                if (accumulated.Count >= MaxCandidateResults)
+                if (accumulated.Count >= budget.TargetCandidateCount)
                 {
-                    return accumulated;
+                    execution.EarlyExitTriggered = true;
+                    var boundedResults = accumulated.Take(budget.TargetCandidateCount).ToArray();
+                    _searchCache?.Set(cacheKey, boundedResults);
+                    return boundedResults;
                 }
             }
         }
 
+        _searchCache?.Set(cacheKey, accumulated);
         return accumulated;
     }
 
     private async Task<(IReadOnlyList<PodcastSearchResult> Results, bool SwitchedToLegacy)> SearchTermWithPagingAsync(
         string searchTerm,
         bool includeExtendedSignals,
+        SearchBudget budget,
+        SearchExecutionState execution,
         CancellationToken cancellationToken)
     {
         var termResults = new List<PodcastSearchResult>();
         var seenTermIds = new HashSet<string>(StringComparer.Ordinal);
         var switchedToLegacy = false;
-        var pageSize = MaxResults;
+        var pageSize = budget.InitialPageSize;
         var page = FirstPageIndex;
-        while (page < FirstPageIndex + MaxPages)
+        while (page < FirstPageIndex + budget.MaxPagesPerTerm)
         {
             var (mapped, sourceItemCount, shouldRetryWithLegacyQuery, shouldRetryAttempt, shouldRetryWithLowerPageSize) = await ExecuteSearchAsync(
                 searchTerm,
                 includeExtendedSignals,
                 page,
                 pageSize,
+                execution,
                 cancellationToken);
 
             if (shouldRetryWithLegacyQuery && includeExtendedSignals)
@@ -195,6 +237,7 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
                     data: new { searchTerm, page, includeExtendedSignalsBeforeSwitch = true },
                     runId: "initial");
                 // #endregion
+                execution.LegacyFallbackTriggered = true;
                 includeExtendedSignals = false;
                 switchedToLegacy = true;
                 termResults.Clear();
@@ -218,6 +261,7 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
                     data: new { searchTerm, previousPageSize = pageSize, newPageSize = LowCostMaxResults },
                     runId: "initial");
                 // #endregion
+                execution.ReducedPageSizeTriggered = true;
                 pageSize = LowCostMaxResults;
                 termResults.Clear();
                 seenTermIds.Clear();
@@ -233,7 +277,10 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
                 }
             }
 
-            if (sourceItemCount < pageSize || termResults.Count >= MaxCandidateResults)
+            var likelyViableCandidateCount = CountLikelyViableCandidates(termResults, searchTerm);
+            if (sourceItemCount < pageSize ||
+                termResults.Count >= budget.PerTermCandidateCount ||
+                likelyViableCandidateCount >= budget.PerTermLikelyViableCandidateCount)
             {
                 // #region agent log
                 WriteDebugLog(
@@ -248,10 +295,19 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
                         sourceItemCount,
                         mappedCount = mapped.Count,
                         termResultsCount = termResults.Count,
-                        maxResults = MaxResults
+                        maxResults = MaxResults,
+                        likelyViableCandidateCount,
+                        targetCandidateCount = budget.PerTermCandidateCount
                     },
                     runId: "initial");
                 // #endregion
+                if (sourceItemCount >= pageSize &&
+                    (termResults.Count >= budget.PerTermCandidateCount ||
+                     likelyViableCandidateCount >= budget.PerTermLikelyViableCandidateCount))
+                {
+                    execution.EarlyExitTriggered = true;
+                }
+
                 break;
             }
 
@@ -266,6 +322,7 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         bool includeExtendedSignals,
         int page,
         int pageSize,
+        SearchExecutionState execution,
         CancellationToken cancellationToken)
     {
         for (var attempt = 0; attempt < 2; attempt++)
@@ -273,9 +330,11 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
             using var request = BuildRequest(searchTerm, includeExtendedSignals, page, pageSize);
             try
             {
+                execution.HttpRequestsSent++;
                 using var response = await _httpClient.SendAsync(request, cancellationToken);
                 if (response.IsSuccessStatusCode)
                 {
+                    execution.SuccessfulPageCount++;
                     var content = await response.Content.ReadAsStringAsync(cancellationToken);
                     var (mapped, sourceItemCount) = MapResults(content);
                     var shouldRetryWithLegacyQuery = includeExtendedSignals && HasGraphQlErrors(content);
@@ -433,6 +492,144 @@ public sealed class ListenNotesPodcastSearchClient(HttpClient httpClient, NudgeO
         };
 
         return JsonSerializer.Serialize(payload);
+    }
+
+    private string BuildCacheKey(IReadOnlyList<string> terms, int publishedAfterDays, int targetCandidateCount)
+    {
+        var normalizedTerms = string.Join(
+            '|',
+            terms.Select(static term => string.IsNullOrWhiteSpace(term) ? string.Empty : term.Trim().ToLowerInvariant()));
+
+        return $"{_tokenScope}|{_options.BaseUrl.Trim()}|{publishedAfterDays}|{targetCandidateCount}|{normalizedTerms}";
+    }
+
+    private static SearchBudget BuildBudget(int keywordCount, int targetResultCount)
+    {
+        var normalizedKeywordCount = Math.Max(1, keywordCount);
+        var normalizedTargetCount = Math.Max(1, targetResultCount);
+        var targetCandidateCount = Math.Clamp(
+            Math.Max(normalizedTargetCount * 5, MinCandidateTarget),
+            MinCandidateTarget,
+            MaxCandidateTarget);
+        var maxPagesPerTerm = normalizedTargetCount <= 15
+            ? 1
+            : normalizedTargetCount <= 40 ? 2 : MaxPagesPerTerm;
+        var initialPageSize = maxPagesPerTerm == 1 ? SinglePageMaxResults : MaxResults;
+        var perTermCandidateCount = Math.Clamp(
+            (int)Math.Ceiling((double)targetCandidateCount / normalizedKeywordCount) + 2,
+            6,
+            initialPageSize * maxPagesPerTerm);
+        var perTermLikelyViableCandidateCount = Math.Clamp(
+            (int)Math.Ceiling((double)normalizedTargetCount / normalizedKeywordCount) + 1,
+            3,
+            perTermCandidateCount);
+
+        return new SearchBudget(
+            targetCandidateCount,
+            maxPagesPerTerm,
+            initialPageSize,
+            perTermCandidateCount,
+            perTermLikelyViableCandidateCount);
+    }
+
+    private static int CountLikelyViableCandidates(IEnumerable<PodcastSearchResult> results, string searchTerm)
+    {
+        return results.Count(result =>
+            !IsExplicitlyUnsupportedLanguage(result.Language) &&
+            HasBasicTermAlignment(result, searchTerm));
+    }
+
+    private static bool HasBasicTermAlignment(PodcastSearchResult result, string searchTerm)
+    {
+        if (string.IsNullOrWhiteSpace(searchTerm))
+        {
+            return true;
+        }
+
+        var normalizedSearchTerm = NormalizeSearchText(searchTerm);
+        if (string.IsNullOrWhiteSpace(normalizedSearchTerm))
+        {
+            return true;
+        }
+
+        var corpus = NormalizeSearchText($"{result.Name} {result.Description}");
+        if (string.IsNullOrWhiteSpace(corpus))
+        {
+            return false;
+        }
+
+        if (corpus.Contains(normalizedSearchTerm, StringComparison.Ordinal))
+        {
+            return true;
+        }
+
+        var termTokens = normalizedSearchTerm.Split(' ', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        return termTokens.Length == 1 && corpus.Contains(termTokens[0], StringComparison.Ordinal);
+    }
+
+    private static bool IsExplicitlyUnsupportedLanguage(string? rawLanguage)
+    {
+        if (string.IsNullOrWhiteSpace(rawLanguage))
+        {
+            return false;
+        }
+
+        var normalized = rawLanguage.Trim().ToLowerInvariant().Replace('_', '-');
+        return !(normalized.StartsWith("en", StringComparison.Ordinal) ||
+                 normalized.StartsWith("hu", StringComparison.Ordinal) ||
+                 normalized.Contains("english", StringComparison.Ordinal) ||
+                 normalized.Contains("hungarian", StringComparison.Ordinal));
+    }
+
+    private static string NormalizeSearchText(string value)
+    {
+        return string.Join(
+            ' ',
+            (value ?? string.Empty)
+                .ToLowerInvariant()
+                .Split(
+                    [' ', '\t', '\r', '\n', ',', '.', ';', ':', '!', '?', '(', ')', '[', ']', '{', '}', '"', '\'', '/', '\\', '|', '-', '_', '+', '=', '*', '&', '#', '@', '%', '^', '$', '<', '>', '~', '`'],
+                    StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
+    }
+
+    private sealed record SearchBudget(
+        int TargetCandidateCount,
+        int MaxPagesPerTerm,
+        int InitialPageSize,
+        int PerTermCandidateCount,
+        int PerTermLikelyViableCandidateCount);
+
+    private sealed class SearchExecutionState
+    {
+        public bool Executed { get; set; }
+        public int KeywordCount { get; set; }
+        public int TargetResultCount { get; set; }
+        public int TargetCandidateCount { get; set; }
+        public int HttpRequestsSent { get; set; }
+        public int SuccessfulPageCount { get; set; }
+        public int RawCandidatesReturned { get; set; }
+        public bool CacheHit { get; set; }
+        public bool LegacyFallbackTriggered { get; set; }
+        public bool ReducedPageSizeTriggered { get; set; }
+        public bool EarlyExitTriggered { get; set; }
+
+        public PodchaserSearchDiagnostics ToDiagnostics()
+        {
+            return new PodchaserSearchDiagnostics
+            {
+                Executed = Executed,
+                KeywordCount = KeywordCount,
+                TargetResultCount = TargetResultCount,
+                TargetCandidateCount = TargetCandidateCount,
+                HttpRequestsSent = HttpRequestsSent,
+                SuccessfulPageCount = SuccessfulPageCount,
+                RawCandidatesReturned = RawCandidatesReturned,
+                CacheHit = CacheHit,
+                LegacyFallbackTriggered = LegacyFallbackTriggered,
+                ReducedPageSizeTriggered = ReducedPageSizeTriggered,
+                EarlyExitTriggered = EarlyExitTriggered
+            };
+        }
     }
 
     private static bool HasGraphQlErrors(string payload)

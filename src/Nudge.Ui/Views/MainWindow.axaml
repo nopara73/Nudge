@@ -113,6 +113,84 @@
 
                                 <TextBlock Text="{Binding RunConfigMessage}" FontWeight="SemiBold" Foreground="#1F2937" />
 
+                                <Border Background="{Binding ApiHealthCardBackground}"
+                                        BorderBrush="{Binding ApiHealthCardBorderBrush}"
+                                        BorderThickness="1"
+                                        CornerRadius="6"
+                                        Padding="10">
+                                    <StackPanel Spacing="8">
+                                        <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
+                                            <TextBlock Text="API Health"
+                                                       FontWeight="SemiBold"
+                                                       VerticalAlignment="Center" />
+                                            <Border Grid.Column="1"
+                                                    Background="{Binding ApiHealthBadgeBackground}"
+                                                    CornerRadius="10"
+                                                    Padding="8,2"
+                                                    VerticalAlignment="Center">
+                                                <TextBlock Text="{Binding ApiHealthBadgeText}"
+                                                           Foreground="{Binding ApiHealthBadgeForeground}"
+                                                           FontSize="12"
+                                                           FontWeight="SemiBold" />
+                                            </Border>
+                                            <Button Grid.Column="2"
+                                                    Content="{Binding ApiHealthButtonText}"
+                                                    Command="{Binding RefreshApiHealthCommand}" />
+                                        </Grid>
+
+                                        <TextBlock Text="{Binding ApiHealthSummary}"
+                                                   FontWeight="SemiBold"
+                                                   Foreground="#111827"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding ApiHealthGuidance}"
+                                                   Foreground="#4B5563"
+                                                   TextWrapping="Wrap" />
+                                        <TextBlock Text="{Binding ApiHealthLastCheckedDisplay}"
+                                                   Foreground="#6B7280"
+                                                   FontSize="12" />
+
+                                        <ItemsControl ItemsSource="{Binding ApiHealthTokens}"
+                                                      IsVisible="{Binding HasApiHealthTokens}">
+                                            <ItemsControl.ItemTemplate>
+                                                <DataTemplate x:DataType="model:PodchaserQuotaTokenDisplayItem">
+                                                    <Border Background="#FFFFFF"
+                                                            BorderBrush="#E5E7EB"
+                                                            BorderThickness="1"
+                                                            CornerRadius="4"
+                                                            Padding="8"
+                                                            Margin="0,0,0,6">
+                                                        <Grid ColumnDefinitions="*,Auto" RowDefinitions="Auto,Auto" ColumnSpacing="8" RowSpacing="2">
+                                                            <TextBlock Text="{Binding Label}"
+                                                                       FontWeight="SemiBold"
+                                                                       Foreground="#111827" />
+                                                            <Border Grid.Column="1"
+                                                                    Background="{Binding BadgeBackground}"
+                                                                    CornerRadius="10"
+                                                                    Padding="8,2"
+                                                                    HorizontalAlignment="Right">
+                                                                <TextBlock Text="{Binding BadgeText}"
+                                                                           Foreground="{Binding BadgeForeground}"
+                                                                           FontSize="12"
+                                                                           FontWeight="SemiBold" />
+                                                            </Border>
+                                                            <TextBlock Grid.Row="1"
+                                                                       Text="{Binding RemainingDisplay}"
+                                                                       Foreground="#374151"
+                                                                       FontWeight="SemiBold" />
+                                                            <TextBlock Grid.Row="1"
+                                                                       Grid.Column="1"
+                                                                       Text="{Binding Detail}"
+                                                                       Foreground="#6B7280"
+                                                                       TextAlignment="Right"
+                                                                       TextWrapping="Wrap" />
+                                                        </Grid>
+                                                    </Border>
+                                                </DataTemplate>
+                                            </ItemsControl.ItemTemplate>
+                                        </ItemsControl>
+                                    </StackPanel>
+                                </Border>
+
                                 <Button Content="Run CLI + Ingest"
                                         Command="{Binding RunFromConfigCommand}"
                                         Background="#1D4ED8"

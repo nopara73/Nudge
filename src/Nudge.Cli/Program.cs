@@ -33,7 +33,7 @@ var configuration = BuildConfiguration();
 var podchaserOptions = BuildPodchaserOptions(configuration);
 var tokenMemory = new PodchaserTokenMemory();
 var candidateTokens = PodchaserTokenMemory.PrioritizeRememberedToken(
-    ResolvePodcastSearchApiTokens(podchaserOptions),
+    PodchaserTokenResolver.Resolve(podchaserOptions),
     tokenMemory.LoadLastKnownGoodToken());
 var selectedToken = candidateTokens.FirstOrDefault();
 if (verboseDiagnostics)
@@ -108,6 +108,11 @@ WriteDebugLog(
     runId: "initial");
 // #endregion
 var run = await pipeline.RunAsync(cliArgs, includeDebugDiagnostics: verboseDiagnostics);
+if (!mode.UseMock)
+{
+    EmitPodchaserSearchSummary(services.GetService<ListenNotesPodcastSearchClient>(), "primary");
+}
+
 string? successfulApiToken = null;
 var exhaustedAllApiTokens = false;
 if (!mode.UseMock && run.Results.Count == 0)
@@ -126,6 +131,7 @@ if (!mode.UseMock && run.Results.Count == 0)
             var fallbackPipeline = fallbackTokenServices.GetRequiredService<PodcastRankingPipeline>();
             var fallbackRun = await fallbackPipeline.RunAsync(cliArgs, includeDebugDiagnostics: verboseDiagnostics);
             var fallbackClient = fallbackTokenServices.GetService<ListenNotesPodcastSearchClient>();
+            EmitPodchaserSearchSummary(fallbackClient, $"fallback-{nextTokenIndex - 1}");
             var fallbackTokenFailed = DidPodchaserTokenFail(fallbackClient);
 
             run = new RankingRunResult
@@ -236,13 +242,18 @@ if (cliArgs.JsonOutput)
 
 return 0;
 
-static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, IConfiguration configuration, string? apiTokenOverride = null)
+static ServiceProvider ConfigureServices(
+    NudgeOptions options,
+    bool useMock,
+    IConfiguration configuration,
+    string? apiTokenOverride = null)
 {
     var serviceCollection = new ServiceCollection();
     serviceCollection.AddOptions();
     serviceCollection.Configure<PodchaserOptions>(configuration.GetSection("Podchaser"));
     serviceCollection.AddSingleton<TimeProvider>(TimeProvider.System);
     serviceCollection.AddSingleton(options);
+    serviceCollection.AddSingleton<PodchaserSearchCache>();
     serviceCollection.AddSingleton<IScoringService, ScoringService>();
     serviceCollection.AddSingleton<IRssParser, RssParser>();
     serviceCollection.AddSingleton<IHostTranscriptLineExtractor, HostTranscriptLineExtractor>();
@@ -255,9 +266,10 @@ static ServiceProvider ConfigureServices(NudgeOptions options, bool useMock, ICo
             provider.GetRequiredService<NudgeOptions>() with
             {
                 ApiKey = string.IsNullOrWhiteSpace(apiTokenOverride)
-                    ? ResolvePodcastSearchApiTokens(provider.GetRequiredService<IOptions<PodchaserOptions>>().Value).FirstOrDefault()
+                    ? PodchaserTokenResolver.Resolve(provider.GetRequiredService<IOptions<PodchaserOptions>>().Value).FirstOrDefault()
                     : apiTokenOverride.Trim()
-            }));
+            },
+            provider.GetRequiredService<PodchaserSearchCache>()));
     serviceCollection.AddHttpClient("podcast-search", (provider, client) =>
     {
         var opts = provider.GetRequiredService<NudgeOptions>();
@@ -352,52 +364,11 @@ static void LogPodchaserConfigurationStatus(PodchaserOptions options)
 {
     var configPath = Path.Combine(Directory.GetCurrentDirectory(), "nudge.local.json");
     var configFound = File.Exists(configPath);
-    var hasDevelopmentToken = !string.IsNullOrWhiteSpace(options.DevelopmentToken);
-    var hasProductionToken = !string.IsNullOrWhiteSpace(options.ProductionToken);
+    var hasToken = !string.IsNullOrWhiteSpace(options.Token);
+    var fallbackCount = options.FallbackTokens?.Count(token => !string.IsNullOrWhiteSpace(token)) ?? 0;
 
     Console.Error.WriteLine(
-        $"Debug: nudge.local.json found={configFound}; Podchaser tokens detected: development={hasDevelopmentToken}, production={hasProductionToken}.");
-}
-
-static IReadOnlyList<string> ResolvePodcastSearchApiTokens(PodchaserOptions options)
-{
-    var tokens = new List<string>();
-
-    if (!string.IsNullOrWhiteSpace(options.ProductionToken))
-    {
-        tokens.Add(options.ProductionToken.Trim());
-    }
-
-    if (!string.IsNullOrWhiteSpace(options.DevelopmentToken))
-    {
-        tokens.Add(options.DevelopmentToken.Trim());
-    }
-
-    if (options.ProductionFallbackTokens is not null)
-    {
-        foreach (var token in options.ProductionFallbackTokens)
-        {
-            if (!string.IsNullOrWhiteSpace(token))
-            {
-                tokens.Add(token.Trim());
-            }
-        }
-    }
-
-    if (options.DevelopmentFallbackTokens is not null)
-    {
-        foreach (var token in options.DevelopmentFallbackTokens)
-        {
-            if (!string.IsNullOrWhiteSpace(token))
-            {
-                tokens.Add(token.Trim());
-            }
-        }
-    }
-
-    return tokens
-        .Distinct(StringComparer.Ordinal)
-        .ToArray();
+        $"Debug: nudge.local.json found={configFound}; Podchaser token detected={hasToken}; fallback tokens detected={fallbackCount}.");
 }
 
 static (bool Success, NudgeOptions? Options, string? Error) BuildNudgeOptionsFromEnvironment(string? apiKey)
@@ -481,6 +452,23 @@ static Uri ParseAbsoluteUriOrThrow(string url)
 static bool DidPodchaserTokenFail(ListenNotesPodcastSearchClient? client)
 {
     return client is { WasPointBudgetExceeded: true } || client is { WasTokenRejected: true };
+}
+
+static void EmitPodchaserSearchSummary(ListenNotesPodcastSearchClient? client, string attemptLabel)
+{
+    if (client is null)
+    {
+        return;
+    }
+
+    var diagnostics = client.LastSearchDiagnostics;
+    if (!diagnostics.Executed)
+    {
+        return;
+    }
+
+    Console.Error.WriteLine(
+        $"Info: Podchaser search [{attemptLabel}] keywords={diagnostics.KeywordCount}, targetTop={diagnostics.TargetResultCount}, candidateBudget={diagnostics.TargetCandidateCount}, requests={diagnostics.HttpRequestsSent}, pages={diagnostics.SuccessfulPageCount}, rawCandidates={diagnostics.RawCandidatesReturned}, cache={(diagnostics.CacheHit ? "hit" : "miss")}, legacyFallback={(diagnostics.LegacyFallbackTriggered ? "yes" : "no")}, lowCostRetry={(diagnostics.ReducedPageSizeTriggered ? "yes" : "no")}, earlyExit={(diagnostics.EarlyExitTriggered ? "yes" : "no")}.");
 }
 
 static void WriteDebugLog(string hypothesisId, string location, string message, object data, string runId)

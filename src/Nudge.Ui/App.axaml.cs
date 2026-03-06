@@ -57,6 +57,7 @@ public partial class App : Application
         var services = new ServiceCollection();
         services.AddSingleton<TimeProvider>(TimeProvider.System);
         services.AddSingleton<CliRunnerService>();
+        services.AddSingleton<PodchaserQuotaService>();
         services.AddSingleton<OutreachRepository>();
         services.AddSingleton<SessionStateStore>();
         services.AddSingleton(new HttpClient { Timeout = TimeSpan.FromSeconds(20) });
