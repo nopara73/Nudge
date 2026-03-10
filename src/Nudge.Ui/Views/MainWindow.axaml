@@ -252,7 +252,7 @@
                                                       HorizontalContentAlignment="Stretch">
                                                 <ListBox ItemsSource="{Binding Items}"
                                                          HorizontalAlignment="Stretch"
-                                                         SelectedItem="{ReflectionBinding $parent[Window].DataContext.SelectedQueueItem}"
+                                                         SelectionChanged="TrackerQueueListBox_OnSelectionChanged"
                                                          ScrollViewer.VerticalScrollBarVisibility="Disabled"
                                                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
                                                     <ListBox.ItemsPanel>
@@ -262,7 +262,12 @@
                                                     </ListBox.ItemsPanel>
                                                     <ListBox.ItemTemplate>
                                                         <DataTemplate>
-                                                            <Border Padding="10" Margin="0,0,0,6" Background="#F3F4F6" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6">
+                                                            <Border Padding="10"
+                                                                    Margin="0,0,0,6"
+                                                                    Background="#F3F4F6"
+                                                                    BorderBrush="#E5E7EB"
+                                                                    BorderThickness="1"
+                                                                    CornerRadius="6">
                                                                 <Grid RowDefinitions="Auto,Auto,Auto" ColumnDefinitions="*,Auto" ColumnSpacing="8" RowSpacing="4">
                                                                     <TextBlock Text="{Binding ShowName}" FontWeight="SemiBold" Foreground="#111827" TextWrapping="Wrap" />
                                                                     <Border Grid.Column="1"

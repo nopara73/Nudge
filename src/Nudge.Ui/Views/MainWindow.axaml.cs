@@ -1,6 +1,10 @@
 using Avalonia;
 using Avalonia.Controls;
+using Avalonia.Controls.Primitives;
+using Avalonia.Controls.Selection;
+using Avalonia.VisualTree;
 using System;
+using System.ComponentModel;
 using Nudge.Ui.Models;
 using Nudge.Ui.ViewModels;
 
@@ -10,11 +14,28 @@ public partial class MainWindow : Window
 {
     private const double DefaultWidth = 1200;
     private const double DefaultHeight = 800;
+    private bool _isSynchronizingTrackerSelection;
 
     public MainWindow()
     {
         InitializeComponent();
         Opened += OnOpened;
+    }
+
+    protected override void OnDataContextChanged(EventArgs e)
+    {
+        if (DataContext is MainWindowViewModel previousViewModel)
+        {
+            previousViewModel.PropertyChanged -= ViewModelOnPropertyChanged;
+        }
+
+        base.OnDataContextChanged(e);
+
+        if (DataContext is MainWindowViewModel currentViewModel)
+        {
+            currentViewModel.PropertyChanged += ViewModelOnPropertyChanged;
+            SyncTrackerSelectionFromViewModel(currentViewModel.SelectedQueueItem);
+        }
     }
 
     private void OnOpened(object? sender, System.EventArgs e)
@@ -92,6 +113,24 @@ public partial class MainWindow : Window
         await OpenEpisodeTranscriptAsync(sender, hostOnly: true);
     }
 
+    private void TrackerQueueListBox_OnSelectionChanged(object? sender, SelectionChangedEventArgs e)
+    {
+        var listBox = sender as ListBox;
+        var selectedItem = listBox?.SelectedItem as QueueItem;
+
+        if (_isSynchronizingTrackerSelection || DataContext is not MainWindowViewModel viewModel || selectedItem is null)
+        {
+            return;
+        }
+
+        if (!ReferenceEquals(viewModel.SelectedQueueItem, selectedItem))
+        {
+            viewModel.SelectedQueueItem = selectedItem;
+        }
+
+        SyncTrackerSelectionFromViewModel(selectedItem);
+    }
+
     private void ShowTranscriptOptionsButton_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
     {
         if (sender is not Button { DataContext: QueueEpisode episode } button)
@@ -154,6 +193,42 @@ public partial class MainWindow : Window
         if (clipboard is not null)
         {
             await clipboard.SetTextAsync(value);
+        }
+    }
+
+    private void ViewModelOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName != nameof(MainWindowViewModel.SelectedQueueItem) || sender is not MainWindowViewModel viewModel)
+        {
+            return;
+        }
+
+        SyncTrackerSelectionFromViewModel(viewModel.SelectedQueueItem);
+    }
+
+    private void SyncTrackerSelectionFromViewModel(QueueItem? selectedItem)
+    {
+        _isSynchronizingTrackerSelection = true;
+
+        try
+        {
+            foreach (var listBox in this.GetVisualDescendants().OfType<ListBox>())
+            {
+                if (listBox.DataContext is not MainWindowViewModel.QueueStateGroup)
+                {
+                    continue;
+                }
+
+                var matchingItem = listBox.ItemsSource?
+                    .OfType<QueueItem>()
+                    .FirstOrDefault(item => selectedItem is not null && item.IdentityKey == selectedItem.IdentityKey);
+
+                listBox.SelectedItem = matchingItem;
+            }
+        }
+        finally
+        {
+            _isSynchronizingTrackerSelection = false;
         }
     }
 
