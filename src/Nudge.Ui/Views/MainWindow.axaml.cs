@@ -2,6 +2,7 @@ using Avalonia;
 using Avalonia.Controls;
 using Avalonia.Controls.Primitives;
 using Avalonia.Controls.Selection;
+using Avalonia.Threading;
 using Avalonia.VisualTree;
 using System;
 using System.ComponentModel;
@@ -67,6 +68,14 @@ public partial class MainWindow : Window
         Position = new PixelPoint(
             targetX,
             targetY);
+
+        if (DataContext is MainWindowViewModel viewModel)
+        {
+            Dispatcher.UIThread.Post(() =>
+            {
+                SyncTrackerSelectionFromViewModel(viewModel.SelectedQueueItem);
+            }, DispatcherPriority.Loaded);
+        }
     }
 
     private async void CopyFeedLinkMenuItem_OnClick(object? sender, Avalonia.Interactivity.RoutedEventArgs e)
