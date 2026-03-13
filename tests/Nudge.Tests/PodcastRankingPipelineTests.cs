@@ -231,7 +231,7 @@ public sealed class PodcastRankingPipelineTests
     }
 
     [Fact]
-    public async Task RunAsync_IntentAwareNicheScoring_PrioritizesAthleteAndPenalizesBusiness()
+    public async Task RunAsync_QueryDrivenNicheScoring_PrioritizesShowsMatchingMoreUserTerms()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var candidates = new[]
@@ -300,7 +300,7 @@ public sealed class PodcastRankingPipelineTests
         };
 
         var pipeline = BuildPipeline(now, candidates, payloads);
-        var args = new CliArguments(["longevity", "fitness"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false);
+        var args = new CliArguments(["longevity", "crossfit"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false);
 
         var run1 = await pipeline.RunAsync(args);
         var run2 = await pipeline.RunAsync(args);
@@ -309,9 +309,10 @@ public sealed class PodcastRankingPipelineTests
         var longevity = run1.Results.Single(r => r.ShowId == "podchaser:longevity");
         var athlete = run1.Results.Single(r => r.ShowId == "podchaser:athlete");
         var business = run1.Results.Single(r => r.ShowId == "podchaser:business");
-        Assert.True(longevity.NicheFit >= athlete.NicheFit);
+        Assert.True(athlete.NicheFit > longevity.NicheFit);
         Assert.True(longevity.NicheFit > business.NicheFit);
-        Assert.Contains(business.NicheFitBreakdown!.TokenHits, t => t.Token == "revenue" && t.Weight < 0);
+        Assert.Contains(athlete.NicheFitBreakdown!.TokenHits, t => t.Token == "crossfit" && t.Weight > 0);
+        Assert.DoesNotContain(business.NicheFitBreakdown!.TokenHits, t => t.Token == "revenue");
     }
 
     [Fact]

@@ -59,21 +59,21 @@ public sealed class ScoringServiceTests
     }
 
     [Fact]
-    public void Score_GenericLongevityShow_OutranksAthleteFocused_WhenQueryIsLongevityFitnessOnly()
+    public void Score_QueryDrivenTerms_DoNotRewardUnaskedSynonyms()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var service = new ScoringService(new FixedTimeProvider(now));
-        var athleteShow = BuildShow(
-            id: "athlete",
-            name: "Athlete Longevity Performance",
-            description: "Masters athlete strength and VO2 development.",
+        var directMatchShow = BuildShow(
+            id: "direct-match",
+            name: "Performance Weekly",
+            description: "Athlete strength and VO2 development.",
             estimatedReach: 0.65,
             now,
             "Training for competition",
             "Crossfit PR improvements",
             "Ranking and performance review");
-        var genericShow = BuildShow(
-            id: "generic",
+        var adjacentConceptShow = BuildShow(
+            id: "adjacent-concept",
             name: "Longevity Science Weekly",
             description: "Longevity and healthspan science updates.",
             estimatedReach: 0.65,
@@ -82,15 +82,15 @@ public sealed class ScoringServiceTests
             "Healthspan biomarkers",
             "Longevity interview");
 
-        var athleteScore = service.Score(athleteShow, ["longevity", "fitness"]);
-        var genericScore = service.Score(genericShow, ["longevity", "fitness"]);
+        var directMatchScore = service.Score(directMatchShow, ["performance"]);
+        var adjacentConceptScore = service.Score(adjacentConceptShow, ["performance"]);
 
-        Assert.True(genericScore.NicheFit >= athleteScore.NicheFit);
-        Assert.True(genericScore.Score >= athleteScore.Score);
+        Assert.True(directMatchScore.NicheFit > adjacentConceptScore.NicheFit);
+        Assert.Equal(0, adjacentConceptScore.NicheFit, 10);
     }
 
     [Fact]
-    public void Score_BusinessFocusedFitnessShow_ReceivesPenalty()
+    public void Score_BusinessFocusedFitnessShow_UsesOnlyQueryTermsForNicheFit()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var service = new ScoringService(new FixedTimeProvider(now));
@@ -107,10 +107,11 @@ public sealed class ScoringServiceTests
         var result = service.Score(show, ["fitness"]);
 
         Assert.InRange(result.NicheFit, 0, 1);
-        Assert.Contains(result.NicheFitBreakdown.TokenHits, t => t.Token == "revenue" && t.Weight == -2.0);
-        Assert.Contains(result.NicheFitBreakdown.TokenHits, t => t.Token == "wellness" && t.Weight == -0.75);
-        Assert.True(result.NicheFitBreakdown.BusinessContextDetected);
-        Assert.True(result.NicheFitBreakdown.PenaltyMagnitude > 0);
+        Assert.Contains(result.NicheFitBreakdown.TokenHits, t => t.Token == "fitness" && t.Weight == 1.0);
+        Assert.DoesNotContain(result.NicheFitBreakdown.TokenHits, t => t.Token == "revenue");
+        Assert.DoesNotContain(result.NicheFitBreakdown.TokenHits, t => t.Token == "wellness");
+        Assert.False(result.NicheFitBreakdown.BusinessContextDetected);
+        Assert.Equal(0, result.NicheFitBreakdown.PenaltyMagnitude, 10);
     }
 
     [Fact]
@@ -129,7 +130,7 @@ public sealed class ScoringServiceTests
             "Healthspan mechanisms");
         var performanceShow = BuildShow(
             id: "performance",
-            name: "Performance Longevity Lab",
+            name: "Performance Lab",
             description: "Athlete strength training and VO2 optimization.",
             estimatedReach: 0.7,
             now,
@@ -183,67 +184,67 @@ public sealed class ScoringServiceTests
     }
 
     [Fact]
-    public void Score_MoreBaselineTokens_IncreasesNicheFitMonotonically()
+    public void Score_MoreQueryTermCoverage_IncreasesNicheFitMonotonically()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var service = new ScoringService(new FixedTimeProvider(now));
-        var low = BuildShow("low", "Longevity Fitness", "Aging healthspan.", 0.6, now, "Longevity update", "Fitness recap", "Aging notes");
+        var low = BuildShow("low", "Longevity Weekly", "General update.", 0.6, now, "Longevity update", "General recap", "General notes");
         var medium = BuildShow(
             "medium",
-            "Longevity Fitness Aging",
-            "Fitness and aging updates for better healthspan.",
+            "Longevity Fitness Weekly",
+            "Fitness updates and longevity notes.",
             0.6,
             now,
-            "Longevity and aging update",
+            "Longevity update",
             "Fitness recap",
-            "Healthspan notes");
+            "General notes");
         var high = BuildShow(
             "high",
-            "Longevity Fitness Aging Healthspan",
-            "Longevity fitness aging healthspan insights.",
+            "Longevity Fitness Aging Weekly",
+            "Longevity fitness aging insights.",
             0.6,
             now,
-            "Longevity fitness aging healthspan",
-            "Healthspan aging longevity",
-            "Fitness longevity healthspan");
+            "Longevity fitness aging",
+            "Aging longevity notes",
+            "Fitness longevity recap");
 
-        var lowScore = service.Score(low, ["longevity", "fitness"]);
-        var mediumScore = service.Score(medium, ["longevity", "fitness"]);
-        var highScore = service.Score(high, ["longevity", "fitness"]);
+        var lowScore = service.Score(low, ["longevity", "fitness", "aging"]);
+        var mediumScore = service.Score(medium, ["longevity", "fitness", "aging"]);
+        var highScore = service.Score(high, ["longevity", "fitness", "aging"]);
 
         Assert.True(lowScore.NicheFit < mediumScore.NicheFit);
         Assert.True(mediumScore.NicheFit < highScore.NicheFit);
     }
 
     [Fact]
-    public void Score_PenaltyTokens_DecreaseNicheFit_ButNeverBelowZero()
+    public void Score_ExtraBusinessWords_DoNotReduceNicheFit_WhenQueryCoverageMatches()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
         var service = new ScoringService(new FixedTimeProvider(now));
-        var noPenalty = BuildShow(
-            "no-penalty",
-            "Longevity Fitness Focus",
-            "Longevity and fitness focus with no business context.",
+        var plainMatch = BuildShow(
+            "plain-match",
+            "Fitness Focus",
+            "Fitness focus with no business context.",
             0.6,
             now,
-            "Longevity prep",
+            "Fitness prep",
             "Fitness block",
-            "Aging review");
-        var withPenalty = BuildShow(
-            "with-penalty",
-            "Athlete Performance Training Revenue Marketing",
-            "Masters strength and VO2 with coaching business wellness.",
+            "Fitness review");
+        var extraBusinessWords = BuildShow(
+            "extra-business-words",
+            "Fitness Revenue Marketing Weekly",
+            "Fitness talk with coaching business wellness.",
             0.6,
             now,
-            "Competition prep and marketing",
-            "Training block revenue",
-            "Performance review coaching");
+            "Fitness prep and marketing",
+            "Fitness block revenue",
+            "Fitness review coaching");
 
-        var noPenaltyScore = service.Score(noPenalty, ["fitness"]);
-        var withPenaltyScore = service.Score(withPenalty, ["fitness"]);
+        var plainMatchScore = service.Score(plainMatch, ["fitness"]);
+        var extraBusinessWordsScore = service.Score(extraBusinessWords, ["fitness"]);
 
-        Assert.True(withPenaltyScore.NicheFit < noPenaltyScore.NicheFit);
-        Assert.True(withPenaltyScore.NicheFit >= 0);
+        Assert.Equal(plainMatchScore.NicheFit, extraBusinessWordsScore.NicheFit, 10);
+        Assert.True(extraBusinessWordsScore.NicheFit >= 0);
     }
 
     [Fact]
