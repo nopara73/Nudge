@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using CommunityToolkit.Mvvm.ComponentModel;
 using CommunityToolkit.Mvvm.Input;
 using Microsoft.Win32;
+using Nudge.Core.Models;
 using Nudge.Ui.Models;
 using Nudge.Ui.Services;
 
@@ -316,6 +317,17 @@ public partial class MainWindowViewModel : ViewModelBase
     public string SelectedNicheFitDisplay => FormatAsPercent(SelectedQueueItem?.NicheFit);
     public string SelectedActivityDisplay => FormatAsPercent(SelectedQueueItem?.ActivityScore);
 
+    public bool HasLowConfidenceParsedEmail =>
+        SelectedQueueItem is not null &&
+        !SelectedQueueItem.HasManualContactOverride &&
+        !string.IsNullOrWhiteSpace(SelectedQueueItem.ContactEmail) &&
+        PodcastEmailSources.IsLowConfidence(SelectedQueueItem.ContactEmailSource);
+
+    public string SelectedContactConfidenceWarning =>
+        HasLowConfidenceParsedEmail
+            ? "This email was inferred from an RSS description and may belong to a guest, sponsor, or other non-host contact. Review it before outreach."
+            : string.Empty;
+
     public bool HasQueueSelection => SelectedQueueItem is not null;
     public bool HasNoQueueSelection => !HasQueueSelection;
     public int FilteredQueueCount => QueueGroups.Sum(group => group.Items.Count);
@@ -469,6 +481,12 @@ public partial class MainWindowViewModel : ViewModelBase
     {
         OnPropertyChanged(nameof(SnoozeHelperText));
         OnPropertyChanged(nameof(SnoozeUntilDisplay));
+    }
+
+    partial void OnManualContactEmailChanged(string value)
+    {
+        OnPropertyChanged(nameof(HasLowConfidenceParsedEmail));
+        OnPropertyChanged(nameof(SelectedContactConfidenceWarning));
     }
 
     partial void OnIsBusyChanged(bool value)
@@ -1118,7 +1136,13 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         var encodedFeedUrl = Uri.EscapeDataString(feedUri.ToString());
-        return Uri.TryCreate($"{RssViewerBaseUrl}{encodedFeedUrl}", UriKind.Absolute, out viewerUri);
+        if (!Uri.TryCreate($"{RssViewerBaseUrl}{encodedFeedUrl}", UriKind.Absolute, out var candidateUri))
+        {
+            return false;
+        }
+
+        viewerUri = candidateUri;
+        return true;
     }
 
     private static bool IsSnoozableState(OutreachState state)
@@ -1473,6 +1497,8 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(SelectedFrequencyDisplay));
         OnPropertyChanged(nameof(SelectedNicheFitDisplay));
         OnPropertyChanged(nameof(SelectedActivityDisplay));
+        OnPropertyChanged(nameof(HasLowConfidenceParsedEmail));
+        OnPropertyChanged(nameof(SelectedContactConfidenceWarning));
         OnPropertyChanged(nameof(SnoozeHelperText));
         OnPropertyChanged(nameof(SnoozeUntilDisplay));
         OnPropertyChanged(nameof(IsSnoozeSectionEnabled));

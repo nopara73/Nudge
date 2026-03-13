@@ -262,6 +262,7 @@ public sealed class PodcastRankingPipeline(
             DetectedLanguage = detectedLanguage,
             FeedUrl = show.FeedUrl,
             ContactEmail = show.ContactValue,
+            ContactEmailSource = parseResult.Payload.PodcastEmailSource,
             Reach = intent.Reach,
             Frequency = intent.Frequency,
             NicheFit = intent.NicheFit,

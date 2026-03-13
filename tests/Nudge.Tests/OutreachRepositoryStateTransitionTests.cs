@@ -1,3 +1,7 @@
+using System.Net;
+using System.Net.Http;
+using System.Text;
+using Nudge.Core.Models;
 using Nudge.Ui.Models;
 using Nudge.Ui.Services;
 
@@ -66,7 +70,73 @@ public sealed class OutreachRepositoryStateTransitionTests
         Assert.Null(afterLongTime.CooldownUntilUtc);
     }
 
-    private static async Task<QueueItem> SeedSingleTargetAsync(OutreachRepository repository, DateTimeOffset nowUtc)
+    [Fact]
+    public async Task SaveRunAsync_RoundTripsContactEmailSource_ToQueueItems()
+    {
+        using var databaseScope = new RepositoryDatabaseScope();
+        var time = new MutableTimeProvider(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+        var repository = new OutreachRepository(time, databaseScope.DatabasePath);
+
+        var item = await SeedSingleTargetAsync(repository, time.GetUtcNow(), PodcastEmailSources.DescriptionRegex);
+
+        Assert.Equal(PodcastEmailSources.DescriptionRegex, item.ContactEmailSource);
+    }
+
+    [Fact]
+    public async Task GetTrackerItemsAsync_BackfillsMissingContactEmailSource_FromSavedFeedUrl()
+    {
+        using var databaseScope = new RepositoryDatabaseScope();
+        var time = new MutableTimeProvider(new DateTimeOffset(2026, 3, 1, 0, 0, 0, TimeSpan.Zero));
+        using var httpClient = new HttpClient(new StubHttpMessageHandler(
+            """
+            <rss version="2.0" xmlns:itunes="http://www.itunes.com/dtds/podcast-1.0.dtd">
+              <channel>
+                <title>Longevity Lab</title>
+                <description>Reach the team at host [at] example.com</description>
+                <item>
+                  <title>Episode 1</title>
+                  <description>Desc</description>
+                </item>
+              </channel>
+            </rss>
+            """))
+        {
+            BaseAddress = new Uri("https://example.com/")
+        };
+        var repository = new OutreachRepository(time, databaseScope.DatabasePath, httpClient);
+
+        var envelope = new CliOutputEnvelope
+        {
+            GeneratedAtUtc = time.GetUtcNow(),
+            Total = 1,
+            Results =
+            [
+                new CliOutputResultItem
+                {
+                    ShowId = "show-1",
+                    ShowName = "Longevity Lab",
+                    DetectedLanguage = "en",
+                    FeedUrl = "https://example.com/feed.xml",
+                    ContactEmail = "host@example.com",
+                    Reach = 0.7,
+                    Frequency = 0.6,
+                    NicheFit = 0.8,
+                    ActivityScore = 0.9,
+                    OutreachPriority = "High",
+                    Score = 0.82,
+                    NewestEpisodePublishedAtUtc = time.GetUtcNow(),
+                    NicheFitBreakdown = new { tokenHits = Array.Empty<object>() }
+                }
+            ]
+        };
+
+        await repository.SaveRunAsync(envelope, "test-command", string.Empty, string.Empty);
+        var item = Assert.Single(await repository.GetTrackerItemsAsync());
+
+        Assert.Equal(PodcastEmailSources.DescriptionRegex, item.ContactEmailSource);
+    }
+
+    private static async Task<QueueItem> SeedSingleTargetAsync(OutreachRepository repository, DateTimeOffset nowUtc, string? contactEmailSource = null)
     {
         var envelope = new CliOutputEnvelope
         {
@@ -81,6 +151,7 @@ public sealed class OutreachRepositoryStateTransitionTests
                     DetectedLanguage = "en",
                     FeedUrl = "https://example.com/feed.xml",
                     ContactEmail = "host@example.com",
+                    ContactEmailSource = contactEmailSource,
                     Reach = 0.7,
                     Frequency = 0.6,
                     NicheFit = 0.8,
@@ -131,6 +202,19 @@ public sealed class OutreachRepositoryStateTransitionTests
             {
                 // Best effort cleanup for temp test data.
             }
+        }
+    }
+
+    private sealed class StubHttpMessageHandler(string responseBody) : HttpMessageHandler
+    {
+        private readonly string _responseBody = responseBody;
+
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        {
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = new StringContent(_responseBody, Encoding.UTF8, "application/rss+xml")
+            });
         }
     }
 }

@@ -1,6 +1,9 @@
 using System.Globalization;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Data.Sqlite;
+using Nudge.Core.Models;
+using Nudge.Core.Services;
 using Nudge.Ui.Models;
 
 namespace Nudge.Ui.Services;
@@ -12,10 +15,12 @@ public sealed class OutreachRepository
     private const string AutoSnoozeReleaseEventType = "AutoReleasedSnooze";
     private const string AutoCooldownReleaseEventType = "AutoReleasedCooldown";
     private readonly string _connectionString;
+    private readonly HttpClient? _httpClient;
     private readonly TimeProvider _timeProvider;
 
-    public OutreachRepository(TimeProvider timeProvider, string? databasePathOverride = null)
+    public OutreachRepository(TimeProvider timeProvider, string? databasePathOverride = null, HttpClient? httpClient = null)
     {
+        _httpClient = httpClient;
         _timeProvider = timeProvider;
         var databasePath = string.IsNullOrWhiteSpace(databasePathOverride)
             ? BuildDefaultDatabasePath()
@@ -50,7 +55,7 @@ public sealed class OutreachRepository
         {
             var identity = TargetIdentityResolver.Resolve(result.ShowId, result.ContactEmail);
             await InsertRunTargetAsync(connection, transaction, runId, identity, result, cancellationToken);
-            await EnsureTargetStateRowAsync(connection, transaction, identity, result.ShowName, result.ContactEmail, envelope.GeneratedAtUtc, cancellationToken);
+            await EnsureTargetStateRowAsync(connection, transaction, identity, result.ShowName, result.ContactEmail, result.ContactEmailSource, envelope.GeneratedAtUtc, cancellationToken);
         }
 
         await transaction.CommitAsync(cancellationToken);
@@ -78,6 +83,7 @@ public sealed class OutreachRepository
 
     public async Task<IReadOnlyList<QueueItem>> GetTrackerItemsAsync(CancellationToken cancellationToken = default)
     {
+        await BackfillContactEmailSourcesAsync(cancellationToken);
         await ReleaseExpiredSnoozesAsync(cancellationToken);
         await ReleaseExpiredCooldownsAsync(cancellationToken);
 
@@ -94,6 +100,7 @@ public sealed class OutreachRepository
                     rt.ShowId,
                     rt.ShowName,
                     rt.ContactEmail,
+                    rt.ContactEmailSource,
                     rt.DetectedLanguage,
                     rt.FeedUrl,
                     rt.Score,
@@ -118,6 +125,7 @@ public sealed class OutreachRepository
                 lrt.ShowId,
                 COALESCE(lrt.ShowName, ts.ShowName, ts.IdentityKey) AS ShowName,
                 COALESCE(lrt.ContactEmail, ts.ContactEmail) AS ContactEmail,
+                COALESCE(lrt.ContactEmailSource, ts.ContactEmailSource) AS ContactEmailSource,
                 ts.ManualContactEmail,
                 COALESCE(lrt.DetectedLanguage, '') AS DetectedLanguage,
                 COALESCE(lrt.FeedUrl, '') AS FeedUrl,
@@ -174,6 +182,7 @@ public sealed class OutreachRepository
             var podcastHosts = ParseStringArrayJson(podcastHostsJson);
 
             var contactEmail = ReadNullableString(reader, "ContactEmail");
+            var contactEmailSource = ReadNullableString(reader, "ContactEmailSource");
             var manualContactEmail = ReadNullableString(reader, "ManualContactEmail");
             var effectiveEmail = !string.IsNullOrWhiteSpace(manualContactEmail)
                 ? manualContactEmail!
@@ -185,6 +194,7 @@ public sealed class OutreachRepository
                 ShowId = ReadNullableString(reader, "ShowId") ?? string.Empty,
                 ShowName = reader.GetString(reader.GetOrdinal("ShowName")),
                 ContactEmail = contactEmail,
+                ContactEmailSource = contactEmailSource,
                 ManualContactEmail = manualContactEmail,
                 EffectiveContactEmail = effectiveEmail,
                 DetectedLanguage = reader.GetString(reader.GetOrdinal("DetectedLanguage")),
@@ -532,6 +542,7 @@ public sealed class OutreachRepository
             item.IdentityKey,
             item.ShowName,
             contactEmail,
+            currentState?.ContactEmailSource ?? item.ContactEmailSource,
             stateValue,
             currentState?.CooldownUntilUtc,
             currentState?.SnoozeUntilUtc,
@@ -585,6 +596,7 @@ public sealed class OutreachRepository
             identityKey,
             currentState?.ShowName ?? string.Empty,
             currentState?.ContactEmail,
+            currentState?.ContactEmailSource,
             toState,
             cooldownUntilUtc,
             snoozeUntilUtc,
@@ -652,10 +664,12 @@ public sealed class OutreachRepository
         command.CommandText = """
             INSERT INTO RunTargets(
                 RunId, IdentityKey, ShowId, ShowName, DetectedLanguage, FeedUrl, ContactEmail,
+                ContactEmailSource,
                 Reach, Frequency, NicheFit, ActivityScore, OutreachPriority, Score,
                 NewestEpisodePublishedAtUtc, PodcastHostsJson, RecentEpisodeTitlesJson, NicheFitBreakdownJson)
             VALUES(
                 @runId, @identityKey, @showId, @showName, @detectedLanguage, @feedUrl, @contactEmail,
+                @contactEmailSource,
                 @reach, @frequency, @nicheFit, @activityScore, @outreachPriority, @score,
                 @newestEpisodePublishedAtUtc, @podcastHostsJson, @recentEpisodeTitlesJson, @nicheFitBreakdownJson)
             """;
@@ -668,6 +682,7 @@ public sealed class OutreachRepository
         command.Parameters.AddWithValue("@feedUrl", item.FeedUrl);
         var normalizedContactEmail = ToNullIfWhitespace(TargetIdentityResolver.NormalizeEmail(item.ContactEmail));
         command.Parameters.AddWithValue("@contactEmail", (object?)normalizedContactEmail ?? DBNull.Value);
+        command.Parameters.AddWithValue("@contactEmailSource", (object?)ToNullIfWhitespace(item.ContactEmailSource) ?? DBNull.Value);
         command.Parameters.AddWithValue("@reach", item.Reach);
         command.Parameters.AddWithValue("@frequency", item.Frequency);
         command.Parameters.AddWithValue("@nicheFit", item.NicheFit);
@@ -700,6 +715,7 @@ public sealed class OutreachRepository
         string identity,
         string showName,
         string? contactEmail,
+        string? contactEmailSource,
         DateTimeOffset seenAtUtc,
         CancellationToken cancellationToken)
     {
@@ -712,6 +728,7 @@ public sealed class OutreachRepository
                 identity,
                 showName,
                 ToNullIfWhitespace(TargetIdentityResolver.NormalizeEmail(contactEmail)),
+                ToNullIfWhitespace(contactEmailSource),
                 OutreachState.New,
                 cooldownUntilUtc: null,
                 snoozeUntilUtc: null,
@@ -728,6 +745,10 @@ public sealed class OutreachRepository
         var updatedContactEmail = string.IsNullOrWhiteSpace(current.ContactEmail)
             ? ToNullIfWhitespace(TargetIdentityResolver.NormalizeEmail(contactEmail))
             : current.ContactEmail;
+        var updatedContactEmailSource = string.IsNullOrWhiteSpace(current.ContactEmailSource) ||
+                                        string.Equals(current.ContactEmailSource, PodcastEmailSources.Unknown, StringComparison.Ordinal)
+            ? ToNullIfWhitespace(contactEmailSource)
+            : current.ContactEmailSource;
         var updatedShowName = string.IsNullOrWhiteSpace(current.ShowName) ? showName : current.ShowName;
 
         await UpsertTargetStateAsync(
@@ -736,6 +757,7 @@ public sealed class OutreachRepository
             identity,
             updatedShowName,
             updatedContactEmail,
+            updatedContactEmailSource,
             current.State,
             current.CooldownUntilUtc,
             current.SnoozeUntilUtc,
@@ -758,7 +780,7 @@ public sealed class OutreachRepository
         command.Transaction = transaction;
         command.CommandText = """
             SELECT IdentityKey, ShowName, ContactEmail, State, CooldownUntilUtc, SnoozeUntilUtc, SnoozedFromState, ContactedAtUtc,
-                   ManualContactEmail, Tags, Note
+                   ContactEmailSource, ManualContactEmail, Tags, Note
             FROM TargetStates
             WHERE IdentityKey = @identityKey
             LIMIT 1
@@ -776,6 +798,7 @@ public sealed class OutreachRepository
             IdentityKey = reader.GetString(reader.GetOrdinal("IdentityKey")),
             ShowName = ReadNullableString(reader, "ShowName"),
             ContactEmail = ReadNullableString(reader, "ContactEmail"),
+            ContactEmailSource = ReadNullableString(reader, "ContactEmailSource"),
             State = ParseState(reader.GetString(reader.GetOrdinal("State"))),
             CooldownUntilUtc = ReadDateTimeOffset(reader, "CooldownUntilUtc"),
             SnoozeUntilUtc = ReadDateTimeOffset(reader, "SnoozeUntilUtc"),
@@ -793,6 +816,7 @@ public sealed class OutreachRepository
         string identityKey,
         string showName,
         string? contactEmail,
+        string? contactEmailSource,
         OutreachState state,
         DateTimeOffset? cooldownUntilUtc,
         DateTimeOffset? snoozeUntilUtc,
@@ -808,14 +832,19 @@ public sealed class OutreachRepository
         command.Transaction = transaction;
         command.CommandText = """
             INSERT INTO TargetStates(
-                IdentityKey, ShowName, ContactEmail, State, CooldownUntilUtc, SnoozeUntilUtc,
+                IdentityKey, ShowName, ContactEmail, ContactEmailSource, State, CooldownUntilUtc, SnoozeUntilUtc,
                 SnoozedFromState, ContactedAtUtc, ManualContactEmail, Tags, Note, LastSeenAtUtc, UpdatedAtUtc)
             VALUES(
-                @identityKey, @showName, @contactEmail, @state, @cooldownUntilUtc, @snoozeUntilUtc,
+                @identityKey, @showName, @contactEmail, @contactEmailSource, @state, @cooldownUntilUtc, @snoozeUntilUtc,
                 @snoozedFromState, @contactedAtUtc, @manualContactEmail, @tags, @note, @lastSeenAtUtc, @updatedAtUtc)
             ON CONFLICT(IdentityKey) DO UPDATE SET
                 ShowName = excluded.ShowName,
                 ContactEmail = COALESCE(TargetStates.ContactEmail, excluded.ContactEmail),
+                ContactEmailSource = CASE
+                    WHEN TargetStates.ContactEmailSource IS NULL OR TargetStates.ContactEmailSource = @unknownContactEmailSource
+                        THEN excluded.ContactEmailSource
+                    ELSE TargetStates.ContactEmailSource
+                END,
                 State = excluded.State,
                 CooldownUntilUtc = excluded.CooldownUntilUtc,
                 SnoozeUntilUtc = excluded.SnoozeUntilUtc,
@@ -830,6 +859,8 @@ public sealed class OutreachRepository
         command.Parameters.AddWithValue("@identityKey", identityKey);
         command.Parameters.AddWithValue("@showName", showName);
         command.Parameters.AddWithValue("@contactEmail", (object?)contactEmail ?? DBNull.Value);
+        command.Parameters.AddWithValue("@contactEmailSource", (object?)contactEmailSource ?? DBNull.Value);
+        command.Parameters.AddWithValue("@unknownContactEmailSource", PodcastEmailSources.Unknown);
         command.Parameters.AddWithValue("@state", state.ToString());
         command.Parameters.AddWithValue("@cooldownUntilUtc", cooldownUntilUtc?.ToString("O") ?? (object)DBNull.Value);
         command.Parameters.AddWithValue("@snoozeUntilUtc", snoozeUntilUtc?.ToString("O") ?? (object)DBNull.Value);
@@ -902,6 +933,7 @@ public sealed class OutreachRepository
                 DetectedLanguage TEXT NOT NULL,
                 FeedUrl TEXT NOT NULL,
                 ContactEmail TEXT NULL,
+                ContactEmailSource TEXT NULL,
                 Reach REAL NOT NULL,
                 Frequency REAL NOT NULL,
                 NicheFit REAL NOT NULL,
@@ -919,6 +951,7 @@ public sealed class OutreachRepository
                 IdentityKey TEXT PRIMARY KEY,
                 ShowName TEXT NULL,
                 ContactEmail TEXT NULL,
+                ContactEmailSource TEXT NULL,
                 State TEXT NOT NULL,
                 CooldownUntilUtc TEXT NULL,
                 SnoozeUntilUtc TEXT NULL,
@@ -951,6 +984,8 @@ public sealed class OutreachRepository
 
         EnsureColumnExists(connection, "TargetStates", "SnoozedFromState", "TEXT NULL");
         EnsureColumnExists(connection, "RunTargets", "PodcastHostsJson", "TEXT NOT NULL DEFAULT '[]'");
+        EnsureColumnExists(connection, "RunTargets", "ContactEmailSource", "TEXT NULL");
+        EnsureColumnExists(connection, "TargetStates", "ContactEmailSource", "TEXT NULL");
     }
 
     private static OutreachState ParseState(string value)
@@ -1209,6 +1244,7 @@ public sealed class OutreachRepository
         public required string IdentityKey { get; init; }
         public string? ShowName { get; init; }
         public string? ContactEmail { get; init; }
+        public string? ContactEmailSource { get; init; }
         public OutreachState State { get; init; }
         public DateTimeOffset? CooldownUntilUtc { get; init; }
         public DateTimeOffset? SnoozeUntilUtc { get; init; }
@@ -1217,5 +1253,126 @@ public sealed class OutreachRepository
         public string? ManualContactEmail { get; init; }
         public string Tags { get; init; } = string.Empty;
         public string Note { get; init; } = string.Empty;
+    }
+
+    private async Task BackfillContactEmailSourcesAsync(CancellationToken cancellationToken)
+    {
+        if (_httpClient is null)
+        {
+            return;
+        }
+
+        var pendingRows = new List<(string IdentityKey, string ContactEmail, string? FeedUrl)>();
+        await using (var connection = new SqliteConnection(_connectionString))
+        {
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = """
+                WITH LatestFeedPerIdentity AS (
+                    SELECT
+                        rt.IdentityKey,
+                        rt.FeedUrl,
+                        ROW_NUMBER() OVER (
+                            PARTITION BY rt.IdentityKey
+                            ORDER BY rt.RunId DESC, rt.Id DESC
+                        ) AS RowNum
+                    FROM RunTargets rt
+                    WHERE COALESCE(rt.FeedUrl, '') <> ''
+                )
+                SELECT
+                    ts.IdentityKey,
+                    ts.ContactEmail,
+                    lf.FeedUrl
+                FROM TargetStates ts
+                LEFT JOIN LatestFeedPerIdentity lf
+                    ON ts.IdentityKey = lf.IdentityKey AND lf.RowNum = 1
+                WHERE
+                    COALESCE(ts.ContactEmail, '') <> ''
+                    AND ts.ContactEmailSource IS NULL
+                """;
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                pendingRows.Add((
+                    reader.GetString(reader.GetOrdinal("IdentityKey")),
+                    reader.GetString(reader.GetOrdinal("ContactEmail")),
+                    ReadNullableString(reader, "FeedUrl")));
+            }
+        }
+
+        if (pendingRows.Count == 0)
+        {
+            return;
+        }
+
+        var updates = new List<(string IdentityKey, string Source)>();
+        foreach (var row in pendingRows)
+        {
+            var derivedSource = await ResolveStoredContactEmailSourceAsync(row.ContactEmail, row.FeedUrl, cancellationToken);
+            updates.Add((row.IdentityKey, derivedSource));
+        }
+
+        await using var updateConnection = new SqliteConnection(_connectionString);
+        await updateConnection.OpenAsync(cancellationToken);
+        await using var transaction = (SqliteTransaction)await updateConnection.BeginTransactionAsync(cancellationToken);
+        foreach (var update in updates)
+        {
+            await using var targetStateCommand = updateConnection.CreateCommand();
+            targetStateCommand.Transaction = transaction;
+            targetStateCommand.CommandText = """
+                UPDATE TargetStates
+                SET
+                    ContactEmailSource = @source,
+                    UpdatedAtUtc = @updatedAtUtc
+                WHERE IdentityKey = @identityKey AND ContactEmailSource IS NULL
+                """;
+            targetStateCommand.Parameters.AddWithValue("@source", update.Source);
+            targetStateCommand.Parameters.AddWithValue("@updatedAtUtc", _timeProvider.GetUtcNow().ToString("O"));
+            targetStateCommand.Parameters.AddWithValue("@identityKey", update.IdentityKey);
+            await targetStateCommand.ExecuteNonQueryAsync(cancellationToken);
+
+            await using var runTargetsCommand = updateConnection.CreateCommand();
+            runTargetsCommand.Transaction = transaction;
+            runTargetsCommand.CommandText = """
+                UPDATE RunTargets
+                SET ContactEmailSource = @source
+                WHERE IdentityKey = @identityKey AND ContactEmailSource IS NULL
+                """;
+            runTargetsCommand.Parameters.AddWithValue("@source", update.Source);
+            runTargetsCommand.Parameters.AddWithValue("@identityKey", update.IdentityKey);
+            await runTargetsCommand.ExecuteNonQueryAsync(cancellationToken);
+        }
+
+        await transaction.CommitAsync(cancellationToken);
+    }
+
+    private async Task<string> ResolveStoredContactEmailSourceAsync(string storedContactEmail, string? feedUrl, CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(feedUrl))
+        {
+            return PodcastEmailSources.Unknown;
+        }
+
+        try
+        {
+            using var request = new HttpRequestMessage(HttpMethod.Get, feedUrl);
+            request.Headers.UserAgent.Clear();
+            request.Headers.UserAgent.Add(ProductInfoHeaderValue.Parse("Nudge-Ui-RSS-Backfill/1.0"));
+
+            using var response = await _httpClient!.SendAsync(request, cancellationToken);
+            response.EnsureSuccessStatusCode();
+            var feedXml = await response.Content.ReadAsStringAsync(cancellationToken);
+            var resolution = PodcastEmailResolver.ResolveFromFeedXml(feedXml);
+            var normalizedResolvedEmail = TargetIdentityResolver.NormalizeEmail(resolution.Email);
+            var normalizedStoredEmail = TargetIdentityResolver.NormalizeEmail(storedContactEmail);
+            return string.Equals(normalizedResolvedEmail, normalizedStoredEmail, StringComparison.Ordinal)
+                ? resolution.Source ?? PodcastEmailSources.Unknown
+                : PodcastEmailSources.Unknown;
+        }
+        catch when (!cancellationToken.IsCancellationRequested)
+        {
+            return PodcastEmailSources.Unknown;
+        }
     }
 }

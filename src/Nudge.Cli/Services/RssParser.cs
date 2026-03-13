@@ -2,6 +2,7 @@ using System.Text.RegularExpressions;
 using System.Xml.Linq;
 using Nudge.Core.Interfaces;
 using Nudge.Core.Models;
+using Nudge.Core.Services;
 
 namespace Nudge.Cli.Services;
 
@@ -30,13 +31,14 @@ public sealed partial class RssParser : IRssParser
                 return Task.FromResult(Result<RssParsePayload>.Fail(new RssParseIssue("invalid_feed", "RSS channel node was not found.")));
             }
 
-            var email = ExtractEmail(channel);
+            var emailResolution = PodcastEmailResolver.ResolveFromChannel(channel);
             var language = ExtractLanguage(channel);
             var hosts = ExtractHosts(channel);
             var episodes = ParseEpisodes(channel, issues);
             var payload = new RssParsePayload
             {
-                PodcastEmail = email,
+                PodcastEmail = emailResolution.Email,
+                PodcastEmailSource = emailResolution.Source,
                 PodcastLanguage = language,
                 PodcastHosts = hosts,
                 Episodes = episodes
@@ -89,50 +91,6 @@ public sealed partial class RssParser : IRssParser
             .Select(e => e.Episode)
             .ToArray();
     }
-
-    private static string? ExtractEmail(XElement channel)
-    {
-        // Explicitly query iTunes namespace elements as required.
-        var channelItunesEmail = channel.Element(ItunesNs + "email")?.Value;
-        var ownerEmail = channel.Element(ItunesNs + "owner")?.Element(ItunesNs + "email")?.Value;
-        var candidate = FirstNonEmpty(channelItunesEmail, ownerEmail);
-        if (!string.IsNullOrWhiteSpace(candidate))
-        {
-            return candidate.Trim();
-        }
-
-        var textToSearch = string.Join(
-            ' ',
-            channel.Elements("description").Select(e => e.Value).Concat(
-                channel.Elements("item").SelectMany(i => i.Elements("description").Select(d => d.Value))));
-        var normalizedText = NormalizeObfuscatedEmailPatterns(textToSearch);
-        var matches = EmailRegex().Matches(normalizedText);
-        if (matches.Count == 0)
-        {
-            return null;
-        }
-
-        // Deterministically return the first valid match.
-        return matches[0].Value;
-    }
-
-    private static string NormalizeObfuscatedEmailPatterns(string input)
-    {
-        if (string.IsNullOrWhiteSpace(input))
-        {
-            return string.Empty;
-        }
-
-        var output = input;
-        output = output.Replace("[at]", "@", StringComparison.OrdinalIgnoreCase);
-        output = output.Replace("(at)", "@", StringComparison.OrdinalIgnoreCase);
-        output = AtWordRegex().Replace(output, "@");
-        output = AroundAtWhitespaceRegex().Replace(output, "@");
-        return output;
-    }
-
-    private static string? FirstNonEmpty(params string?[] values) =>
-        values.FirstOrDefault(v => !string.IsNullOrWhiteSpace(v));
 
     private static string? ExtractLanguage(XElement channel)
     {
@@ -295,12 +253,4 @@ public sealed partial class RssParser : IRssParser
         return string.IsNullOrWhiteSpace(atomLinkHref) ? null : atomLinkHref;
     }
 
-    [GeneratedRegex(@"\b[A-Z0-9._%+\-]+@[A-Z0-9.\-]+\.[A-Z]{2,}\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
-    private static partial Regex EmailRegex();
-
-    [GeneratedRegex(@"\bat\b", RegexOptions.IgnoreCase | RegexOptions.Compiled)]
-    private static partial Regex AtWordRegex();
-
-    [GeneratedRegex(@"\s*@\s*", RegexOptions.Compiled)]
-    private static partial Regex AroundAtWhitespaceRegex();
 }

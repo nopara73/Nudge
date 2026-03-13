@@ -52,6 +52,9 @@ public sealed class CliOutputResultItem
     [JsonPropertyName("contactEmail")]
     public string? ContactEmail { get; init; }
 
+    [JsonPropertyName("contactEmailSource")]
+    public string? ContactEmailSource { get; init; }
+
     [JsonPropertyName("reach")]
     public double Reach { get; init; }
 

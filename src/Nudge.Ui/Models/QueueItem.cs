@@ -6,6 +6,7 @@ public sealed class QueueItem
     public required string ShowId { get; init; }
     public required string ShowName { get; init; }
     public string? ContactEmail { get; init; }
+    public string? ContactEmailSource { get; init; }
     public string? ManualContactEmail { get; init; }
     public required string EffectiveContactEmail { get; init; }
     public required string DetectedLanguage { get; init; }
@@ -27,6 +28,7 @@ public sealed class QueueItem
     public DateTimeOffset? ContactedAtUtc { get; init; }
     public string Tags { get; init; } = string.Empty;
     public string Note { get; init; } = string.Empty;
+    public bool HasManualContactOverride => !string.IsNullOrWhiteSpace(ManualContactEmail);
 
     public string StateDisplayLabel => State switch
     {

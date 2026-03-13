@@ -327,6 +327,16 @@
                                             <TextBlock Text="Contact + Notes" FontWeight="SemiBold" Foreground="#111827" />
                                             <TextBlock Text="Contact" />
                                             <TextBox Text="{Binding ManualContactEmail}" Watermark="email@example.com" />
+                                            <Border IsVisible="{Binding HasLowConfidenceParsedEmail}"
+                                                    Background="#FFFBEB"
+                                                    BorderBrush="#F59E0B"
+                                                    BorderThickness="1"
+                                                    CornerRadius="4"
+                                                    Padding="8">
+                                                <TextBlock Text="{Binding SelectedContactConfidenceWarning}"
+                                                           Foreground="#92400E"
+                                                           TextWrapping="Wrap" />
+                                            </Border>
                                             <TextBlock Text="Note" />
                                             <TextBox Text="{Binding QueueNote}" AcceptsReturn="True" MinHeight="80" TextWrapping="Wrap" />
                                             <Button Content="Save Contact + Notes"

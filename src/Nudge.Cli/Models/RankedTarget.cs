@@ -9,6 +9,7 @@ public sealed record RankedTarget
     public required string DetectedLanguage { get; init; }
     public string FeedUrl { get; init; } = string.Empty;
     public string? ContactEmail { get; init; }
+    public string? ContactEmailSource { get; init; }
     public double Reach { get; init; }
     public double Frequency { get; init; }
     public double NicheFit { get; init; }

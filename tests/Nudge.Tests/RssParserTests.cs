@@ -1,4 +1,5 @@
 using Nudge.Cli.Services;
+using Nudge.Core.Models;
 
 namespace Nudge.Tests;
 
@@ -32,6 +33,7 @@ public sealed class RssParserTests
         Assert.True(result.Success);
         Assert.NotNull(result.Payload);
         Assert.Equal("owner@example.com", result.Payload!.PodcastEmail);
+        Assert.Equal(PodcastEmailSources.ItunesOwnerEmail, result.Payload.PodcastEmailSource);
         Assert.Equal("en-us", result.Payload.PodcastLanguage);
         Assert.Equal("https://example.com/episodes/1", result.Payload.Episodes[0].Url);
     }
@@ -61,6 +63,7 @@ public sealed class RssParserTests
         Assert.True(result.Success);
         Assert.NotNull(result.Payload);
         Assert.Equal("team@example.com", result.Payload!.PodcastEmail);
+        Assert.Equal(PodcastEmailSources.DescriptionRegex, result.Payload.PodcastEmailSource);
     }
 
     [Fact]

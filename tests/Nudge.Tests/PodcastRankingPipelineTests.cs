@@ -103,6 +103,42 @@ public sealed class PodcastRankingPipelineTests
     }
 
     [Fact]
+    public async Task RunAsync_PassesContactEmailSource_FromRssPayloadToRankedTarget()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var candidates = new[]
+        {
+            new PodcastSearchResult
+            {
+                Id = "podchaser:aging-athlete",
+                Name = "Aging Athlete Show",
+                Description = "Show about healthy aging and performance.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/aging-athlete.xml",
+                EstimatedReach = 0.55
+            }
+        };
+
+        var payloads = new Dictionary<string, RssParsePayload>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://feeds.example.com/aging-athlete.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "guest@example.com",
+                PodcastEmailSource = PodcastEmailSources.DescriptionRegex,
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(now, "Aging athlete training", "Healthy longevity", "Masters fitness")
+            }
+        };
+
+        var pipeline = BuildPipeline(now, candidates, payloads);
+        var result = await pipeline.RunAsync(
+            new CliArguments(["aging athlete"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
+
+        var rankedTarget = Assert.Single(result.Results);
+        Assert.Equal(PodcastEmailSources.DescriptionRegex, rankedTarget.ContactEmailSource);
+    }
+
+    [Fact]
     public async Task RunAsync_WithFixedFixtureData_IsDeterministic_AndPrioritizesNicheFit()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
@@ -738,7 +774,9 @@ public sealed class PodcastRankingPipelineTests
             return Task.FromResult(Result<RssParsePayload>.Ok(new RssParsePayload
             {
                 PodcastEmail = payload.PodcastEmail,
+                PodcastEmailSource = payload.PodcastEmailSource,
                 PodcastLanguage = payload.PodcastLanguage,
+                PodcastHosts = payload.PodcastHosts,
                 Episodes = payload.Episodes
             }));
         }
