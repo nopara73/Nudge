@@ -5,7 +5,7 @@ namespace Nudge.Core.Interfaces;
 public interface IPodcastSearchClient
 {
     Task<IReadOnlyList<PodcastSearchResult>> SearchAsync(
-        IReadOnlyList<string> keywords,
+        IReadOnlyList<string> searchTerms,
         int publishedAfterDays,
         int targetResultCount,
         CancellationToken cancellationToken = default);

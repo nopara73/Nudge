@@ -166,6 +166,7 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             };
         }
 
+        var normalizedCorpus = NormalizeKeywordPhrase(BuildNicheCorpus(show));
         var hitMap = new Dictionary<string, NicheFitTokenHit>(StringComparer.OrdinalIgnoreCase);
         var perKeywordScores = new List<double>(keywords.Count);
 
@@ -188,7 +189,6 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
             }
 
             var keywordWeightTotal = 0.0;
-            var keywordMatchedWeight = 0.0;
             foreach (var token in keywordTokens)
             {
                 var tokenWeight = GetKeywordTokenWeight(token, keywordTokenFrequencies);
@@ -198,6 +198,43 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
                 }
 
                 keywordWeightTotal += tokenWeight;
+            }
+
+            if (keywordWeightTotal <= 0)
+            {
+                perKeywordScores.Add(0);
+                continue;
+            }
+
+            if (keywordTokens.Length > 1)
+            {
+                var normalizedPhrase = NormalizeKeywordPhrase(rawKeyword);
+                var phraseMatched = !string.IsNullOrWhiteSpace(normalizedPhrase) &&
+                                    normalizedCorpus.Contains(normalizedPhrase, StringComparison.Ordinal);
+                if (phraseMatched)
+                {
+                    hitMap[normalizedPhrase] = new NicheFitTokenHit
+                    {
+                        Token = normalizedPhrase,
+                        Hits = 1,
+                        Weight = keywordWeightTotal,
+                        Contribution = keywordWeightTotal
+                    };
+                }
+
+                perKeywordScores.Add(phraseMatched ? 1.0 : 0.0);
+                continue;
+            }
+
+            var keywordMatchedWeight = 0.0;
+            foreach (var token in keywordTokens)
+            {
+                var tokenWeight = GetKeywordTokenWeight(token, keywordTokenFrequencies);
+                if (tokenWeight <= 0)
+                {
+                    continue;
+                }
+
                 if (!tokenBag.TryGetValue(token, out var hitCount) || hitCount <= 0)
                 {
                     continue;
@@ -224,9 +261,7 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
                 }
             }
 
-            var keywordScore = keywordWeightTotal <= 0
-                ? 0
-                : Clamp01(keywordMatchedWeight / keywordWeightTotal);
+            var keywordScore = Clamp01(keywordMatchedWeight / keywordWeightTotal);
             perKeywordScores.Add(keywordScore);
         }
 
@@ -311,6 +346,20 @@ public sealed partial class ScoringService(TimeProvider timeProvider) : IScoring
         }
 
         return 1.0 / frequency;
+    }
+
+    private static string NormalizeKeywordPhrase(string value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+        {
+            return string.Empty;
+        }
+
+        return string.Join(
+            ' ',
+            WordTokenRegex()
+                .Matches(value.ToLowerInvariant())
+                .Select(match => match.Value));
     }
 
     private static Dictionary<string, int> BuildNicheTokenBag(Show show)

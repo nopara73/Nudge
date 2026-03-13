@@ -64,6 +64,8 @@ public sealed class CliRunnerService
         startInfo.ArgumentList.Add("--project");
         startInfo.ArgumentList.Add("src/Nudge.Cli");
         startInfo.ArgumentList.Add("--");
+        startInfo.ArgumentList.Add("--search-terms");
+        startInfo.ArgumentList.Add(string.Join(",", profile.SearchTerms));
         startInfo.ArgumentList.Add("--keywords");
         startInfo.ArgumentList.Add(string.Join(",", profile.Keywords));
         startInfo.ArgumentList.Add("--published-after-days");

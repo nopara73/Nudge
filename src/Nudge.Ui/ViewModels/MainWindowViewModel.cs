@@ -24,6 +24,7 @@ public partial class MainWindowViewModel : ViewModelBase
     private const double DefaultMinReachPercent = 0;
     private const double DefaultMaxReachPercent = 100;
     private const int RecentEpisodeDisplayLimit = 7;
+    private static readonly string[] DefaultMainSearchTerms = ["longevity"];
     private static readonly IReadOnlyList<SnoozePresetOption> DefaultSnoozePresets =
     [
         new SnoozePresetOption("+1 day", 1, SnoozePresetUnit.Days),
@@ -109,6 +110,9 @@ public partial class MainWindowViewModel : ViewModelBase
 
         var session = _sessionStateStore.Load();
         CurrentViewIndex = ParseViewIndex(session.LastView);
+        RunSearchTerms = string.IsNullOrWhiteSpace(session.RunSearchTerms)
+            ? string.Join(", ", DefaultMainSearchTerms)
+            : session.RunSearchTerms;
         RunKeywords = string.IsNullOrWhiteSpace(session.RunKeywords)
             ? string.Join(", ", DefaultRunKeywords)
             : session.RunKeywords;
@@ -149,6 +153,10 @@ public partial class MainWindowViewModel : ViewModelBase
 
     [ObservableProperty]
     private string warningsText = string.Empty;
+
+    [ObservableProperty]
+    [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
+    private string runSearchTerms = string.Empty;
 
     [ObservableProperty]
     [NotifyCanExecuteChangedFor(nameof(RunFromConfigCommand))]
@@ -528,6 +536,12 @@ public partial class MainWindowViewModel : ViewModelBase
         OnPropertyChanged(nameof(QueueFilterSummary));
     }
 
+    partial void OnRunSearchTermsChanged(string value)
+    {
+        EvaluateRunConfigurationState();
+        PersistSession();
+    }
+
     partial void OnRunKeywordsChanged(string value)
     {
         EvaluateRunConfigurationState();
@@ -646,6 +660,7 @@ public partial class MainWindowViewModel : ViewModelBase
     [RelayCommand]
     private void ResetRunConfig()
     {
+        RunSearchTerms = string.Join(", ", DefaultMainSearchTerms);
         RunKeywords = string.Join(", ", DefaultRunKeywords);
         PublishedAfterDays = DefaultPublishedAfterDays.ToString();
         RunTop = DefaultTop.ToString();
@@ -698,6 +713,7 @@ public partial class MainWindowViewModel : ViewModelBase
             WarningsText = string.Empty;
             IsFullResetConfirmVisible = false;
 
+            RunSearchTerms = string.Join(", ", DefaultMainSearchTerms);
             RunKeywords = string.Join(", ", DefaultRunKeywords);
             PublishedAfterDays = DefaultPublishedAfterDays.ToString();
             RunTop = DefaultTop.ToString();
@@ -1350,6 +1366,7 @@ public partial class MainWindowViewModel : ViewModelBase
         _sessionStateStore.Save(new SessionState
         {
             LastView = CurrentViewIndex.ToString(),
+            RunSearchTerms = RunSearchTerms,
             RunKeywords = RunKeywords,
             PublishedAfterDays = PublishedAfterDays,
             RunTop = RunTop,
@@ -1360,6 +1377,7 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private RunConfigProfile BuildRunProfile()
     {
+        var parsedSearchTerms = ParseCommaSeparatedTerms(RunSearchTerms);
         var parsedKeywords = ParseRunKeywords(RunKeywords);
         var publishedAfterDaysValue = TryParsePublishedAfterDays(PublishedAfterDays, out var parsedDays)
             ? parsedDays
@@ -1380,6 +1398,7 @@ public partial class MainWindowViewModel : ViewModelBase
         }
 
         return new RunConfigProfile(
+            parsedSearchTerms.Count == 0 ? DefaultMainSearchTerms : parsedSearchTerms,
             parsedKeywords.Count == 0 ? DefaultRunKeywords : parsedKeywords,
             publishedAfterDaysValue,
             topValue,
@@ -1391,10 +1410,16 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private (bool Success, RunConfigProfile? Profile, string ErrorMessage) TryBuildRunProfile()
     {
+        var parsedSearchTerms = ParseCommaSeparatedTerms(RunSearchTerms);
+        if (parsedSearchTerms.Count == 0)
+        {
+            return (false, null, "Enter at least one main search term for --search-terms.");
+        }
+
         var parsedKeywords = ParseRunKeywords(RunKeywords);
         if (parsedKeywords.Count == 0)
         {
-            return (false, null, "Enter at least one keyword for --keywords.");
+            return (false, null, "Enter at least one ranking keyword for --keywords.");
         }
 
         if (!TryParsePublishedAfterDays(PublishedAfterDays, out var parsedDays))
@@ -1425,6 +1450,7 @@ public partial class MainWindowViewModel : ViewModelBase
         return (
             true,
             new RunConfigProfile(
+                parsedSearchTerms,
                 parsedKeywords,
                 parsedDays,
                 parsedTop,
@@ -1437,9 +1463,14 @@ public partial class MainWindowViewModel : ViewModelBase
 
     private static List<string> ParseRunKeywords(string rawKeywords)
     {
-        return (rawKeywords ?? string.Empty)
+        return ParseCommaSeparatedTerms(rawKeywords);
+    }
+
+    private static List<string> ParseCommaSeparatedTerms(string rawValue)
+    {
+        return (rawValue ?? string.Empty)
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
-            .Where(keyword => !string.IsNullOrWhiteSpace(keyword))
+            .Where(value => !string.IsNullOrWhiteSpace(value))
             .Distinct(StringComparer.OrdinalIgnoreCase)
             .ToList();
     }
@@ -2026,12 +2057,13 @@ public partial class MainWindowViewModel : ViewModelBase
             return;
         }
 
+        var searchTermCount = profileResult.Profile.SearchTerms.Count;
         var keywordCount = profileResult.Profile.Keywords.Count;
         var dayLabel = profileResult.Profile.PublishedAfterDays == 1 ? "day" : "days";
         var minReachPercent = profileResult.Profile.MinReach.HasValue ? profileResult.Profile.MinReach.Value * 100 : 0;
         var maxReachPercent = profileResult.Profile.MaxReach.HasValue ? profileResult.Profile.MaxReach.Value * 100 : 100;
         RunConfigMessage =
-            $"Ready: {keywordCount} keyword(s), last {profileResult.Profile.PublishedAfterDays} {dayLabel}, top {profileResult.Profile.Top}, reach {minReachPercent:0.#}-{maxReachPercent:0.#}%.";
+            $"Ready: {searchTermCount} search term(s), {keywordCount} ranking keyword(s), last {profileResult.Profile.PublishedAfterDays} {dayLabel}, top {profileResult.Profile.Top}, reach {minReachPercent:0.#}-{maxReachPercent:0.#}%.";
         CommandPreview = _cliRunner.BuildCommandPreview(profileResult.Profile);
     }
 

@@ -53,6 +53,7 @@ public sealed class SessionStateStore
 public sealed class SessionState
 {
     public string LastView { get; init; } = "Run";
+    public string RunSearchTerms { get; init; } = string.Empty;
     public string RunKeywords { get; init; } = string.Empty;
     public string PublishedAfterDays { get; init; } = string.Empty;
     public string RunTop { get; init; } = string.Empty;

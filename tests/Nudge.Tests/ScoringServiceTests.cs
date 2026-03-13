@@ -279,6 +279,38 @@ public sealed class ScoringServiceTests
     }
 
     [Fact]
+    public void Score_MultiWordKeywords_RequireExactNormalizedPhraseMatches()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var service = new ScoringService(new FixedTimeProvider(now));
+        var exactPhraseShow = BuildShow(
+            id: "exact-phrase",
+            name: "VO2 Max Weekly",
+            description: "Exact VO2 max training discussions.",
+            estimatedReach: 0.62,
+            now,
+            "VO2 max intervals",
+            "VO2 max pacing",
+            "VO2 max recovery");
+        var splitTokenShow = BuildShow(
+            id: "split-token",
+            name: "VO2 Performance Weekly",
+            description: "VO2 training with max effort intervals.",
+            estimatedReach: 0.62,
+            now,
+            "VO2 intervals",
+            "Max effort training",
+            "VO2 pacing");
+
+        var exactPhraseScore = service.Score(exactPhraseShow, ["vo2 max"]);
+        var splitTokenScore = service.Score(splitTokenShow, ["vo2 max"]);
+
+        Assert.True(exactPhraseScore.NicheFit > splitTokenScore.NicheFit);
+        Assert.Equal(0, splitTokenScore.NicheFit, 10);
+        Assert.Contains(exactPhraseScore.NicheFitBreakdown.TokenHits, t => t.Token == "vo2 max");
+    }
+
+    [Fact]
     public void Score_KeywordAlignment_DemotesShowsMatchingOnlyGenericTerms()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);

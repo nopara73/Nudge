@@ -43,7 +43,7 @@
                                 <TextBlock Text="Run Configuration" FontWeight="SemiBold" FontSize="16" />
 
                                 <Grid ColumnDefinitions="*,Auto,Auto" ColumnSpacing="8">
-                                    <TextBlock Text="Keywords (comma-separated)" FontWeight="SemiBold" VerticalAlignment="Center" />
+                                    <TextBlock Text="Main Search Terms (comma-separated)" FontWeight="SemiBold" VerticalAlignment="Center" />
                                     <Button Grid.Column="1" Content="Reset Run Settings" Command="{Binding ResetRunConfigCommand}" />
                                     <Button Grid.Column="2"
                                             Content="Full Reset"
@@ -51,12 +51,21 @@
                                             Foreground="White"
                                             Command="{Binding StartFullResetCommand}" />
                                 </Grid>
+                                <TextBox Text="{Binding RunSearchTerms}"
+                                         Watermark="longevity"
+                                         TextWrapping="Wrap"
+                                         AcceptsReturn="True"
+                                         MinHeight="44" />
+                                <TextBlock Text="These terms are sent to Podchaser for discovery. Adding more search terms makes the query more expensive."
+                                           TextWrapping="Wrap"
+                                           Foreground="#6B7280" />
+                                <TextBlock Text="Ranking Keywords (comma-separated)" FontWeight="SemiBold" VerticalAlignment="Center" />
                                 <TextBox Text="{Binding RunKeywords}"
                                          Watermark="masters athlete, over 40 fitness, longevity performance"
                                          TextWrapping="Wrap"
                                          AcceptsReturn="True"
                                          MinHeight="60" />
-                                <TextBlock Text="Use specific phrases to improve podcast relevance."
+                                <TextBlock Text="Use exact phrases to influence ranking after search results are fetched."
                                            TextWrapping="Wrap"
                                            Foreground="#6B7280" />
                                 <Border IsVisible="{Binding IsFullResetConfirmVisible}"

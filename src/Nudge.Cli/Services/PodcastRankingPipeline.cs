@@ -43,7 +43,7 @@ public sealed class PodcastRankingPipeline(
         var warnings = new List<string>();
         var diagnostics = new List<string>();
         var candidates = await _searchClient.SearchAsync(
-            arguments.Keywords,
+            arguments.SearchTerms,
             arguments.PublishedAfterDays,
             arguments.Top,
             cancellationToken);
@@ -221,11 +221,6 @@ public sealed class PodcastRankingPipeline(
             ContactValue = parseResult.Payload.PodcastEmail,
             Episodes = eligibleEpisodes
         };
-        if (!HasExactMultiWordKeywordPhraseMatch(show, keywords))
-        {
-            return null;
-        }
-
         var intent = _scoringService.Score(show, keywords);
         var adjustedScore = missingContactEmail ? Math.Max(0, intent.Score - MissingEmailPenalty) : intent.Score;
         var outreachPriority = ClassifyOutreachPriority(
@@ -308,42 +303,6 @@ public sealed class PodcastRankingPipeline(
         }
 
         return "Low";
-    }
-
-    private static bool HasExactMultiWordKeywordPhraseMatch(Show show, IReadOnlyList<string> keywords)
-    {
-        var multiWordKeywords = keywords
-            .Where(k => !string.IsNullOrWhiteSpace(k))
-            .Select(k => k.Trim())
-            .Where(k => k.Contains(' ', StringComparison.Ordinal))
-            .Distinct(StringComparer.OrdinalIgnoreCase)
-            .ToArray();
-        if (multiWordKeywords.Length == 0)
-        {
-            return true;
-        }
-
-        var corpus = NormalizePhraseText(string.Join(
-            ' ',
-            new[]
-            {
-                show.Name,
-                show.Description ?? string.Empty,
-                string.Join(' ', show.Episodes.Select(e => e.Title))
-            }));
-        return multiWordKeywords.Any(keyword => corpus.Contains(NormalizePhraseText(keyword), StringComparison.Ordinal));
-    }
-
-    private static string NormalizePhraseText(string text)
-    {
-        if (string.IsNullOrWhiteSpace(text))
-        {
-            return string.Empty;
-        }
-
-        return string.Join(' ', text
-            .ToLowerInvariant()
-            .Split(TokenSeparators, StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries));
     }
 
     private static string DescribeFailure(Exception ex)

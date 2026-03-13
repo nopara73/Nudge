@@ -88,6 +88,7 @@ WriteDebugLog(
         missingApiKeyWarning = mode.MissingApiKeyWarning,
         selectedTokenLength = selectedToken?.Value.Length ?? 0,
         selectedTokenDotCount = selectedToken?.Value.Count(c => c == '.') ?? 0,
+        searchTermsCount = cliArgs.SearchTerms.Count,
         keywordsCount = cliArgs.Keywords.Count
     },
     runId: "initial");
@@ -322,8 +323,8 @@ static ServiceProvider ConfigureServices(
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  Nudge.Cli --keywords \"ai,startups\" --published-after-days 60 [--top 3] [--min-reach 0.2] [--max-reach 0.9] [--json] [--pretty] [--use-mock] [--verbose]");
-    Console.WriteLine("  Nudge.Cli \"ai,startups\" 30");
+    Console.WriteLine("  Nudge.Cli --search-terms \"longevity\" --keywords \"ai,startups\" --published-after-days 60 [--top 3] [--min-reach 0.2] [--max-reach 0.9] [--json] [--pretty] [--use-mock] [--verbose]");
+    Console.WriteLine("  Nudge.Cli --search-terms \"ai\" --keywords \"ai,startups\" 30");
 }
 
 static bool ParseVerboseDiagnostics(IReadOnlyList<string> args)

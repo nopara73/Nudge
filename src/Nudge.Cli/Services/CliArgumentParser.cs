@@ -59,6 +59,7 @@ public static class CliArgumentParser
             positional.Add(arg);
         }
 
+        var searchTermsRaw = named.TryGetValue("--search-terms", out var searchTermsValue) ? searchTermsValue : string.Empty;
         var keywordsRaw = named.TryGetValue("--keywords", out var k) ? k : positional.FirstOrDefault() ?? string.Empty;
         var daysRaw = named.TryGetValue("--published-after-days", out var d) ? d : positional.Skip(1).FirstOrDefault() ?? "30";
         var topRaw = named.TryGetValue("--top", out var t) ? t : "3";
@@ -93,12 +94,22 @@ public static class CliArgumentParser
                 new RssParseIssue("invalid_reach_bounds", "min_reach must be less than or equal to max_reach."));
         }
 
+        var searchTerms = searchTermsRaw
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .ToArray();
         var keywords = keywordsRaw
             .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
             .Where(s => !string.IsNullOrWhiteSpace(s))
             .ToArray();
 
-        return Result<CliArguments>.Ok(new CliArguments(keywords, days, top, json, pretty, minReach, maxReach));
+        if (searchTerms.Length == 0)
+        {
+            return Result<CliArguments>.Fail(
+                new RssParseIssue("missing_search_terms", "search_terms must include at least one comma-separated value."));
+        }
+
+        return Result<CliArguments>.Ok(new CliArguments(searchTerms, keywords, days, top, json, pretty, minReach, maxReach));
     }
 
     private static bool TryParseReachBound(string? rawValue, string codeSuffix, out double? parsedValue, out RssParseIssue? error)

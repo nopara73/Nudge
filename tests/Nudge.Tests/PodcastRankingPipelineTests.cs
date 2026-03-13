@@ -18,7 +18,7 @@ public sealed class PodcastRankingPipelineTests
             [new Episode("Old Episode", "about ai", now.AddDays(-120))]);
 
         var result = await pipeline.RunAsync(
-            new CliArguments(["ai"], PublishedAfterDays: 7, Top: 10, JsonOutput: false, PrettyJson: false),
+            new CliArguments(["ai"], ["ai"], PublishedAfterDays: 7, Top: 10, JsonOutput: false, PrettyJson: false),
             includeDebugDiagnostics: true);
 
         Assert.Single(result.Results);
@@ -35,7 +35,7 @@ public sealed class PodcastRankingPipelineTests
             []);
 
         var result = await pipeline.RunAsync(
-            new CliArguments(["ai"], PublishedAfterDays: 30, Top: 10, JsonOutput: false, PrettyJson: false),
+            new CliArguments(["ai"], ["ai"], PublishedAfterDays: 30, Top: 10, JsonOutput: false, PrettyJson: false),
             includeDebugDiagnostics: true);
 
         Assert.Empty(result.Results);
@@ -97,7 +97,7 @@ public sealed class PodcastRankingPipelineTests
 
         var pipeline = BuildPipeline(now, candidates, payloads);
         var result = await pipeline.RunAsync(
-            new CliArguments(["fitness"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
+            new CliArguments(["fitness"], ["fitness"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
 
         Assert.Contains(result.Warnings, w => w.Contains("Reach signal confidence is low", StringComparison.OrdinalIgnoreCase));
     }
@@ -132,7 +132,7 @@ public sealed class PodcastRankingPipelineTests
 
         var pipeline = BuildPipeline(now, candidates, payloads);
         var result = await pipeline.RunAsync(
-            new CliArguments(["aging athlete"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
+            new CliArguments(["aging athlete"], ["aging athlete"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
 
         var rankedTarget = Assert.Single(result.Results);
         Assert.Equal(PodcastEmailSources.DescriptionRegex, rankedTarget.ContactEmailSource);
@@ -219,7 +219,7 @@ public sealed class PodcastRankingPipelineTests
         };
 
         var pipeline = BuildPipeline(now, candidates, payloads);
-        var args = new CliArguments(["longevity", "fitness"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false);
+        var args = new CliArguments(["longevity", "fitness"], ["longevity", "fitness"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false);
 
         var run1 = await pipeline.RunAsync(args);
         var run2 = await pipeline.RunAsync(args);
@@ -300,7 +300,7 @@ public sealed class PodcastRankingPipelineTests
         };
 
         var pipeline = BuildPipeline(now, candidates, payloads);
-        var args = new CliArguments(["longevity", "crossfit"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false);
+        var args = new CliArguments(["longevity", "crossfit"], ["longevity", "crossfit"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false);
 
         var run1 = await pipeline.RunAsync(args);
         var run2 = await pipeline.RunAsync(args);
@@ -368,7 +368,7 @@ public sealed class PodcastRankingPipelineTests
 
         var pipeline = BuildPipeline(now, candidates, payloads);
         var result = await pipeline.RunAsync(
-            new CliArguments(["longevity", "fitness"], PublishedAfterDays: 365, Top: 10, JsonOutput: false, PrettyJson: false));
+            new CliArguments(["longevity", "fitness"], ["longevity", "fitness"], PublishedAfterDays: 365, Top: 10, JsonOutput: false, PrettyJson: false));
 
         Assert.Equal("podchaser:recent-moderate", result.Results[0].ShowId);
         var oldHighNiche = result.Results.Single(r => r.ShowId == "podchaser:old-high-niche");
@@ -450,9 +450,9 @@ public sealed class PodcastRankingPipelineTests
 
         var pipeline = BuildPipeline(now, candidates, payloads);
         var run1 = await pipeline.RunAsync(
-            new CliArguments(["longevity", "fitness"], PublishedAfterDays: 365, Top: 10, JsonOutput: false, PrettyJson: false));
+            new CliArguments(["longevity", "fitness"], ["longevity", "fitness"], PublishedAfterDays: 365, Top: 10, JsonOutput: false, PrettyJson: false));
         var run2 = await pipeline.RunAsync(
-            new CliArguments(["longevity", "fitness"], PublishedAfterDays: 365, Top: 10, JsonOutput: false, PrettyJson: false));
+            new CliArguments(["longevity", "fitness"], ["longevity", "fitness"], PublishedAfterDays: 365, Top: 10, JsonOutput: false, PrettyJson: false));
 
         Assert.Equal(run1.Results.Select(r => r.ShowId), run2.Results.Select(r => r.ShowId));
         Assert.Contains(run1.Results.Single(r => r.ShowId == "podchaser:high").OutreachPriority, ["High", "Medium", "Low"]);
@@ -513,15 +513,17 @@ public sealed class PodcastRankingPipelineTests
         var pipeline = BuildPipeline(now, candidates, payloads);
         var result = await pipeline.RunAsync(
             new CliArguments(
+                ["masters athlete", "over 40 fitness", "longevity performance"],
                 ["masters athlete", "over 40 fitness", "longevity performance", "crossfit masters", "vo2 max aging", "rejuvenation olympics"],
                 PublishedAfterDays: 60,
                 Top: 10,
                 JsonOutput: false,
                 PrettyJson: false));
 
-        Assert.Single(result.Results);
         Assert.Equal("podchaser:athlete", result.Results[0].ShowId);
-        Assert.DoesNotContain(result.Results, r => r.ShowId == "podchaser:gear");
+        var gear = result.Results.Single(r => r.ShowId == "podchaser:gear");
+        Assert.Equal(0, gear.NicheFit, 10);
+        Assert.True(result.Results[0].Score > gear.Score);
     }
 
     [Fact]
@@ -580,7 +582,7 @@ public sealed class PodcastRankingPipelineTests
             });
 
         var result = await pipeline.RunAsync(
-            new CliArguments(["longevity", "fitness"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
+            new CliArguments(["longevity"], ["longevity", "fitness"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
 
         Assert.Single(result.Results);
         Assert.Equal("podchaser:good", result.Results[0].ShowId);
@@ -712,7 +714,7 @@ public sealed class PodcastRankingPipelineTests
 
         var pipeline = BuildPipeline(now, candidates, payloads);
         var result = await pipeline.RunAsync(
-            new CliArguments(["health"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
+            new CliArguments(["health"], ["health"], PublishedAfterDays: 60, Top: 10, JsonOutput: false, PrettyJson: false));
         var showIds = result.Results.Select(r => r.ShowId).ToArray();
 
         Assert.Contains("podchaser:en-tag", showIds);

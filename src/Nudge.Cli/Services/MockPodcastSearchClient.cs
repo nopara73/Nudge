@@ -37,12 +37,12 @@ public sealed class MockPodcastSearchClient : IPodcastSearchClient
     ];
 
     public Task<IReadOnlyList<PodcastSearchResult>> SearchAsync(
-        IReadOnlyList<string> keywords,
+        IReadOnlyList<string> searchTerms,
         int publishedAfterDays,
         int targetResultCount,
         CancellationToken cancellationToken = default)
     {
-        var normalizedKeywords = keywords
+        var normalizedKeywords = searchTerms
             .Where(k => !string.IsNullOrWhiteSpace(k))
             .Select(k => k.Trim().ToLowerInvariant())
             .Distinct()
