@@ -316,7 +316,7 @@
                             <StackPanel Spacing="10">
                                 <TextBlock Text="Selected Podcast" FontSize="16" FontWeight="SemiBold"/>
                                 <Border Background="#FFFFFF" BorderBrush="#E5E7EB" BorderThickness="1" CornerRadius="6" Padding="10">
-                                    <TextBlock Text="{Binding SelectedPodcastTitleAndHostsDisplay}" TextWrapping="Wrap"/>
+                                    <SelectableTextBlock Text="{Binding SelectedPodcastTitleAndHostsDisplay}" TextWrapping="Wrap"/>
                                 </Border>
 
                                 <Border IsVisible="{Binding HasNoQueueSelection}"
