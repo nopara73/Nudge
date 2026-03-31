@@ -139,6 +139,83 @@ public sealed class PodcastRankingPipelineTests
     }
 
     [Fact]
+    public async Task RunAsync_WhenSkipHardToReachOnesEnabled_SkipsMissingAndInferredEmails()
+    {
+        var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);
+        var candidates = new[]
+        {
+            new PodcastSearchResult
+            {
+                Id = "podchaser:clean-email",
+                Name = "Clean Email Show",
+                Description = "High signal show.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/clean-email.xml",
+                EstimatedReach = 0.6
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:missing-email",
+                Name = "Missing Email Show",
+                Description = "No direct contact address.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/missing-email.xml",
+                EstimatedReach = 0.6
+            },
+            new PodcastSearchResult
+            {
+                Id = "podchaser:inferred-email",
+                Name = "Inferred Email Show",
+                Description = "Email extracted from description text.",
+                Language = "en",
+                FeedUrl = "https://feeds.example.com/inferred-email.xml",
+                EstimatedReach = 0.6
+            }
+        };
+
+        var payloads = new Dictionary<string, RssParsePayload>(StringComparer.OrdinalIgnoreCase)
+        {
+            ["https://feeds.example.com/clean-email.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "host@clean.example.com",
+                PodcastEmailSource = PodcastEmailSources.ItunesEmail,
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(now, "Longevity systems", "VO2 max aging", "Masters training")
+            },
+            ["https://feeds.example.com/missing-email.xml"] = new RssParsePayload
+            {
+                PodcastEmail = null,
+                PodcastEmailSource = PodcastEmailSources.Unknown,
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(now, "Longevity systems", "VO2 max aging", "Masters training")
+            },
+            ["https://feeds.example.com/inferred-email.xml"] = new RssParsePayload
+            {
+                PodcastEmail = "guest@example.com",
+                PodcastEmailSource = PodcastEmailSources.DescriptionRegex,
+                PodcastLanguage = "en",
+                Episodes = BuildRecentEpisodes(now, "Longevity systems", "VO2 max aging", "Masters training")
+            }
+        };
+
+        var pipeline = BuildPipeline(now, candidates, payloads);
+        var result = await pipeline.RunAsync(
+            new CliArguments(
+                ["longevity"],
+                ["longevity", "masters training"],
+                PublishedAfterDays: 60,
+                Top: 10,
+                JsonOutput: false,
+                PrettyJson: false,
+                SkipHardToReachOnes: true));
+
+        var rankedTarget = Assert.Single(result.Results);
+        Assert.Equal("podchaser:clean-email", rankedTarget.ShowId);
+        Assert.Contains(result.Warnings, warning => warning.Contains("Skipped 2 hard-to-reach show(s)", StringComparison.OrdinalIgnoreCase));
+        Assert.DoesNotContain(result.Warnings, warning => warning.Contains("Missing contact email penalty applied", StringComparison.OrdinalIgnoreCase));
+    }
+
+    [Fact]
     public async Task RunAsync_WithFixedFixtureData_IsDeterministic_AndPrioritizesNicheFit()
     {
         var now = new DateTimeOffset(2026, 2, 28, 0, 0, 0, TimeSpan.Zero);

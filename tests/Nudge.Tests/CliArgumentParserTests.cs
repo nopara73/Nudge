@@ -29,6 +29,17 @@ public sealed class CliArgumentParserTests
     }
 
     [Fact]
+    public void TryParse_ParsesSkipHardToReachOnesFlag()
+    {
+        var result = CliArgumentParser.TryParse(
+            ["--search-terms", "ai", "--keywords", "ai,startups", "--published-after-days", "30", "--skiphardtoreachones"]);
+
+        Assert.True(result.Success);
+        Assert.NotNull(result.Payload);
+        Assert.True(result.Payload!.SkipHardToReachOnes);
+    }
+
+    [Fact]
     public void TryParse_ParsesReachBounds_WhenProvided()
     {
         var result = CliArgumentParser.TryParse(

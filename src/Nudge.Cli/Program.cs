@@ -112,7 +112,8 @@ WriteDebugLog(
         publishedAfterDays = cliArgs.PublishedAfterDays,
         top = cliArgs.Top,
         minReach = cliArgs.MinReach,
-        maxReach = cliArgs.MaxReach
+        maxReach = cliArgs.MaxReach,
+        skipHardToReachOnes = cliArgs.SkipHardToReachOnes
     },
     runId: "initial");
 // #endregion
@@ -323,7 +324,7 @@ static ServiceProvider ConfigureServices(
 static void PrintUsage()
 {
     Console.WriteLine("Usage:");
-    Console.WriteLine("  Nudge.Cli --search-terms \"longevity\" --keywords \"ai,startups\" --published-after-days 60 [--top 3] [--min-reach 0.2] [--max-reach 0.9] [--json] [--pretty] [--use-mock] [--verbose]");
+    Console.WriteLine("  Nudge.Cli --search-terms \"longevity\" --keywords \"ai,startups\" --published-after-days 60 [--top 3] [--min-reach 0.2] [--max-reach 0.9] [--skiphardtoreachones] [--json] [--pretty] [--use-mock] [--verbose]");
     Console.WriteLine("  Nudge.Cli --search-terms \"ai\" --keywords \"ai,startups\" 30");
 }
 
@@ -442,7 +443,8 @@ static bool WasPublishedAfterDaysProvided(IReadOnlyList<string> args)
             if (args[i].Equals("--json", StringComparison.OrdinalIgnoreCase) ||
                 args[i].Equals("--pretty", StringComparison.OrdinalIgnoreCase) ||
                 args[i].Equals("--use-mock", StringComparison.OrdinalIgnoreCase) ||
-                args[i].Equals("--verbose", StringComparison.OrdinalIgnoreCase))
+                args[i].Equals("--verbose", StringComparison.OrdinalIgnoreCase) ||
+                args[i].Equals("--skiphardtoreachones", StringComparison.OrdinalIgnoreCase))
             {
                 if (args[i].Equals("--use-mock", StringComparison.OrdinalIgnoreCase) &&
                     i + 1 < args.Count &&

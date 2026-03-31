@@ -8,5 +8,6 @@ public sealed record CliArguments(
     bool JsonOutput,
     bool PrettyJson,
     double? MinReach = null,
-    double? MaxReach = null
+    double? MaxReach = null,
+    bool SkipHardToReachOnes = false
 );

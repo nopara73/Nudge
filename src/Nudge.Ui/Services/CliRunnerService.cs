@@ -84,6 +84,8 @@ public sealed class CliRunnerService
             startInfo.ArgumentList.Add(profile.MaxReach.Value.ToString("0.###", CultureInfo.InvariantCulture));
         }
 
+        startInfo.ArgumentList.Add("--skiphardtoreachones");
+
         startInfo.ArgumentList.Add("--json");
         startInfo.ArgumentList.Add("--pretty");
 

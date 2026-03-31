@@ -53,14 +53,28 @@ public sealed class PodcastRankingPipeline(
             diagnostics.Add($"Raw API shows before local filtering: {candidates.Count}");
         }
         var thresholdUtc = _timeProvider.GetUtcNow().AddDays(-arguments.PublishedAfterDays);
-        var ranked = await BuildRankedTargetsAsync(candidates, arguments.Keywords, thresholdUtc, applyRecencyFilter: true, warnings, cancellationToken);
+        var ranked = await BuildRankedTargetsAsync(
+            candidates,
+            arguments.Keywords,
+            thresholdUtc,
+            applyRecencyFilter: true,
+            arguments.SkipHardToReachOnes,
+            warnings,
+            cancellationToken);
         if (ranked.Count == 0)
         {
             if (includeDebugDiagnostics)
             {
                 diagnostics.Add("No ranked results after local recency filtering; retrying without recency filter.");
             }
-            ranked = await BuildRankedTargetsAsync(candidates, arguments.Keywords, thresholdUtc, applyRecencyFilter: false, warnings, cancellationToken);
+            ranked = await BuildRankedTargetsAsync(
+                candidates,
+                arguments.Keywords,
+                thresholdUtc,
+                applyRecencyFilter: false,
+                arguments.SkipHardToReachOnes,
+                warnings,
+                cancellationToken);
         }
 
         var ordered = ranked
@@ -109,18 +123,28 @@ public sealed class PodcastRankingPipeline(
         IReadOnlyList<string> keywords,
         DateTimeOffset thresholdUtc,
         bool applyRecencyFilter,
+        bool skipHardToReachOnes,
         List<string> warnings,
         CancellationToken cancellationToken)
     {
         var ranked = new List<RankedTarget>();
         var missingContactShows = new List<string>();
+        var skippedHardToReachShows = new List<string>();
         using var semaphore = new SemaphoreSlim(5, 5);
         var tasks = candidates.Select(async candidate =>
         {
             await semaphore.WaitAsync(cancellationToken);
             try
             {
-                var rankedTarget = await BuildRankedTargetAsync(candidate, keywords, thresholdUtc, applyRecencyFilter, missingContactShows, cancellationToken);
+                var rankedTarget = await BuildRankedTargetAsync(
+                    candidate,
+                    keywords,
+                    thresholdUtc,
+                    applyRecencyFilter,
+                    skipHardToReachOnes,
+                    missingContactShows,
+                    skippedHardToReachShows,
+                    cancellationToken);
                 if (rankedTarget is not null)
                 {
                     lock (ranked)
@@ -156,6 +180,19 @@ public sealed class PodcastRankingPipeline(
             warnings.Add($"Missing contact email penalty applied to {missingContactShows.Distinct(StringComparer.OrdinalIgnoreCase).Count()} show(s): {sample}{suffix}");
         }
 
+        if (skippedHardToReachShows.Count > 0)
+        {
+            var uniqueSkippedShows = skippedHardToReachShows
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(name => name, StringComparer.OrdinalIgnoreCase)
+                .ToArray();
+            var sampleShows = uniqueSkippedShows.Take(3).ToArray();
+            var sample = string.Join(", ", sampleShows.Select(name => $"'{name}'"));
+            var remainder = Math.Max(0, uniqueSkippedShows.Length - sampleShows.Length);
+            var suffix = remainder > 0 ? $" (+{remainder} more)." : ".";
+            warnings.Add($"Skipped {uniqueSkippedShows.Length} hard-to-reach show(s): {sample}{suffix}");
+        }
+
         return ranked;
     }
 
@@ -164,13 +201,25 @@ public sealed class PodcastRankingPipeline(
         IReadOnlyList<string> keywords,
         DateTimeOffset thresholdUtc,
         bool applyRecencyFilter,
+        bool skipHardToReachOnes,
         List<string> missingContactShows,
+        List<string> skippedHardToReachShows,
         CancellationToken cancellationToken)
     {
         var xml = await _feedClient.GetFeedXmlAsync(candidate.FeedUrl, cancellationToken);
         var parseResult = await _rssParser.ParseAsync(xml, cancellationToken);
         if (!parseResult.Success || parseResult.Payload is null)
         {
+            return null;
+        }
+
+        if (skipHardToReachOnes && IsHardToReach(parseResult.Payload.PodcastEmail, parseResult.Payload.PodcastEmailSource))
+        {
+            lock (skippedHardToReachShows)
+            {
+                skippedHardToReachShows.Add(candidate.Name);
+            }
+
             return null;
         }
 
@@ -318,6 +367,16 @@ public sealed class PodcastRankingPipeline(
         }
 
         return "feed fetch failed";
+    }
+
+    private static bool IsHardToReach(string? contactEmail, string? contactEmailSource)
+    {
+        if (string.IsNullOrWhiteSpace(contactEmail))
+        {
+            return true;
+        }
+
+        return PodcastEmailSources.IsLowConfidence(contactEmailSource);
     }
 
     private static void AddReachSanitySignals(

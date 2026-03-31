@@ -12,6 +12,7 @@ public static class CliArgumentParser
         var positional = new List<string>();
         var json = false;
         var pretty = false;
+        var skipHardToReachOnes = false;
 
         for (var i = 0; i < args.Length; i++)
         {
@@ -42,6 +43,12 @@ public static class CliArgumentParser
 
                 if (arg.Equals("--verbose", StringComparison.OrdinalIgnoreCase))
                 {
+                    continue;
+                }
+
+                if (arg.Equals("--skiphardtoreachones", StringComparison.OrdinalIgnoreCase))
+                {
+                    skipHardToReachOnes = true;
                     continue;
                 }
 
@@ -109,7 +116,7 @@ public static class CliArgumentParser
                 new RssParseIssue("missing_search_terms", "search_terms must include at least one comma-separated value."));
         }
 
-        return Result<CliArguments>.Ok(new CliArguments(searchTerms, keywords, days, top, json, pretty, minReach, maxReach));
+        return Result<CliArguments>.Ok(new CliArguments(searchTerms, keywords, days, top, json, pretty, minReach, maxReach, skipHardToReachOnes));
     }
 
     private static bool TryParseReachBound(string? rawValue, string codeSuffix, out double? parsedValue, out RssParseIssue? error)
