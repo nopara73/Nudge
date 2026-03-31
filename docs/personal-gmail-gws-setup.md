@@ -6,7 +6,7 @@ This project uses a local PowerShell wrapper so you can run Google Workspace CLI
 
 For personal accounts, the broad "recommended" scope set can fail with `invalid_scope` when OAuth is still in testing mode. A narrower login scope is more reliable:
 
-- Use `gmail` scope only at first.
+- Use `https://www.googleapis.com/auth/gmail.send,https://www.googleapis.com/auth/gmail.settings.basic` at first.
 - Add more scopes later only if needed.
 
 ## 1) Prerequisites
@@ -25,9 +25,10 @@ In Google Cloud Console (in your chosen project):
 4. Add your Gmail address under **Test users**
 5. Open **Credentials** and create **OAuth client ID**
 6. Choose **Desktop app**
-7. Download the JSON and save it as:
+7. Download the JSON and save it as either:
 
-`%USERPROFILE%\.config\gws\client_secret.json`
+- `.\.local\gws\client_secret.json` (recommended for this repo setup), or
+- `%USERPROFILE%\.config\gws\client_secret.json` (the script will auto-copy it into `.\.local\gws\` on first run)
 
 If auth says "Access blocked", it is usually missing test-user setup.
 
@@ -41,7 +42,7 @@ From repo root:
 
 This runs:
 
-`gws auth login --scopes gmail`
+`gws auth login --scopes https://www.googleapis.com/auth/gmail.send,https://www.googleapis.com/auth/gmail.settings.basic`
 
 and stores auth state under:
 
