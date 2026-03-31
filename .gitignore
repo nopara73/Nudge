@@ -54,6 +54,7 @@ packages/
 
 # Dotnet local tools and environment
 .dotnet/
+.local/
 
 # Rider / ReSharper
 _ReSharper*/
