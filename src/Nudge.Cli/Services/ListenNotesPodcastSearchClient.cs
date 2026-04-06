@@ -19,9 +19,9 @@ public sealed class ListenNotesPodcastSearchClient(
     private const int MaxResults = 50;
     private const int SinglePageMaxResults = 25;
     private const int LowCostMaxResults = 10;
-    private const int MaxPagesPerTerm = 3;
+    private const int MaxPagesPerTerm = 12;
     private const int MinCandidateTarget = 15;
-    private const int MaxCandidateTarget = 90;
+    private const int MaxCandidateTarget = 600;
     private const int FirstPageIndex = 0;
     private const string SearchPodcastsQuery =
         """
@@ -509,13 +509,22 @@ public sealed class ListenNotesPodcastSearchClient(
     {
         var normalizedKeywordCount = Math.Max(1, keywordCount);
         var normalizedTargetCount = Math.Max(1, targetResultCount);
+        var candidateMultiplier = normalizedTargetCount >= 100
+            ? 6
+            : normalizedTargetCount >= 60 ? 5 : 4;
         var targetCandidateCount = Math.Clamp(
-            Math.Max(normalizedTargetCount * 5, MinCandidateTarget),
+            Math.Max(normalizedTargetCount * candidateMultiplier, MinCandidateTarget),
             MinCandidateTarget,
             MaxCandidateTarget);
         var maxPagesPerTerm = normalizedTargetCount <= 15
             ? 1
-            : normalizedTargetCount <= 40 ? 2 : MaxPagesPerTerm;
+            : normalizedTargetCount <= 40
+                ? 2
+                : normalizedTargetCount <= 80
+                    ? 4
+                    : normalizedTargetCount <= 120
+                        ? 8
+                        : MaxPagesPerTerm;
         var initialPageSize = maxPagesPerTerm == 1 ? SinglePageMaxResults : MaxResults;
         var perTermCandidateCount = Math.Clamp(
             (int)Math.Ceiling((double)targetCandidateCount / normalizedKeywordCount) + 2,

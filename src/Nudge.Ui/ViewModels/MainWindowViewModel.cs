@@ -597,7 +597,9 @@ public partial class MainWindowViewModel : ViewModelBase
                 return;
             }
 
-            await _repository.SaveRunAsync(cliRun.Envelope, cliRun.CommandPreview, cliRun.StdOut, cliRun.StdErr);
+            var (filteredEnvelope, skippedPreviouslySeen) =
+                await _repository.FilterPreviouslySeenResultsAsync(cliRun.Envelope);
+            await _repository.SaveRunAsync(filteredEnvelope, cliRun.CommandPreview, cliRun.StdOut, cliRun.StdErr);
             try
             {
                 await RefreshApiHealthCoreAsync(updateRunStatus: false);
@@ -609,7 +611,10 @@ public partial class MainWindowViewModel : ViewModelBase
             var tokenUsageNote = BuildPodchaserTokenUsageNote(cliRun.StdErr);
             var quotaNote = BuildQuotaStatusNote(cliRun.StdErr);
             RunStatus = CombineMessageParts(
-                $"Run ingested at {_timeProvider.GetUtcNow():u}. Loaded {cliRun.Envelope.Total} targets.",
+                $"Run ingested at {_timeProvider.GetUtcNow():u}. Loaded {filteredEnvelope.Total} new target(s) from {cliRun.Envelope.Total} result(s).",
+                skippedPreviouslySeen > 0
+                    ? $"Skipped {skippedPreviouslySeen} previously seen target(s) before ingest."
+                    : string.Empty,
                 tokenUsageNote,
                 quotaNote);
 

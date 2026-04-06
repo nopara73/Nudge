@@ -62,6 +62,57 @@ public sealed class OutreachRepository
         return runId;
     }
 
+    public async Task<(CliOutputEnvelope Envelope, int SkippedPreviouslySeen)> FilterPreviouslySeenResultsAsync(
+        CliOutputEnvelope envelope,
+        CancellationToken cancellationToken = default)
+    {
+        if (envelope.Results.Count == 0)
+        {
+            return (envelope, 0);
+        }
+
+        var seenIdentities = new HashSet<string>(StringComparer.Ordinal);
+        await using (var connection = new SqliteConnection(_connectionString))
+        {
+            await connection.OpenAsync(cancellationToken);
+            await using var command = connection.CreateCommand();
+            command.CommandText = "SELECT IdentityKey FROM TargetStates";
+
+            await using var reader = await command.ExecuteReaderAsync(cancellationToken);
+            while (await reader.ReadAsync(cancellationToken))
+            {
+                seenIdentities.Add(reader.GetString(reader.GetOrdinal("IdentityKey")));
+            }
+        }
+
+        var filteredResults = new List<CliOutputResultItem>(envelope.Results.Count);
+        var skippedPreviouslySeen = 0;
+        foreach (var result in envelope.Results)
+        {
+            var identity = TargetIdentityResolver.Resolve(result.ShowId, result.ContactEmail);
+            if (seenIdentities.Contains(identity))
+            {
+                skippedPreviouslySeen++;
+                continue;
+            }
+
+            filteredResults.Add(result);
+            seenIdentities.Add(identity);
+        }
+
+        var filteredEnvelope = new CliOutputEnvelope
+        {
+            SchemaVersion = envelope.SchemaVersion,
+            GeneratedAtUtc = envelope.GeneratedAtUtc,
+            Arguments = envelope.Arguments,
+            Total = filteredResults.Count,
+            Results = filteredResults,
+            Warnings = envelope.Warnings
+        };
+
+        return (filteredEnvelope, skippedPreviouslySeen);
+    }
+
     public async Task ClearAllDataAsync(CancellationToken cancellationToken = default)
     {
         await using var connection = new SqliteConnection(_connectionString);
@@ -88,13 +139,7 @@ public sealed class OutreachRepository
         await ReleaseExpiredCooldownsAsync(cancellationToken);
 
         const string sql = """
-            WITH LatestRun AS (
-                SELECT Id
-                FROM Runs
-                ORDER BY GeneratedAtUtc DESC
-                LIMIT 1
-            ),
-            LatestRunTargets AS (
+            WITH LatestRunTargets AS (
                 SELECT
                     rt.IdentityKey,
                     rt.ShowId,
@@ -115,10 +160,9 @@ public sealed class OutreachRepository
                     rt.NicheFitBreakdownJson,
                     ROW_NUMBER() OVER (
                         PARTITION BY rt.IdentityKey
-                        ORDER BY rt.Score DESC, rt.Id DESC
+                        ORDER BY rt.RunId DESC, rt.Id DESC
                     ) AS RowNum
                 FROM RunTargets rt
-                JOIN LatestRun lr ON rt.RunId = lr.Id
             )
             SELECT
                 ts.IdentityKey,
