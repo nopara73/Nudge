@@ -23,6 +23,7 @@ $TrackerScript = Join-Path $PSScriptRoot "ai_outreach_tracker.py"
 $GmailScript = Join-Path $PSScriptRoot "gws-personal-gmail.ps1"
 $ArtifactsDir = Join-Path $RepoRoot ".local/ai-outreach"
 $TemplatePath = Join-Path $ArtifactsDir "email-template.md"
+$TemplateLockPath = Join-Path $ArtifactsDir "email-template.lock.json"
 $SendLedgerPath = Join-Path $ArtifactsDir "send-ledger.json"
 New-Item -ItemType Directory -Path $ArtifactsDir -Force | Out-Null
 
@@ -105,6 +106,60 @@ function Get-TemplateParts {
     }
 }
 
+function Get-TemplateDigest {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TemplateFile
+    )
+
+    if (-not (Test-Path -LiteralPath $TemplateFile)) {
+        throw "Email template not found: $TemplateFile"
+    }
+
+    $item = Get-Item -LiteralPath $TemplateFile
+    $raw = Get-Content -LiteralPath $TemplateFile -Raw
+    $lineCount = if ([string]::IsNullOrEmpty($raw)) { 0 } else { ($raw -replace "`r", "" -split "`n").Count }
+    $sha256 = (Get-FileHash -LiteralPath $TemplateFile -Algorithm SHA256).Hash.ToLowerInvariant()
+    return @{
+        sha256 = $sha256
+        lineCount = $lineCount
+        bytes = [int64]$item.Length
+    }
+}
+
+function Assert-TemplateIntegrity {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$TemplateFile,
+        [Parameter(Mandatory = $true)]
+        [string]$TemplateLockFile
+    )
+
+    if (-not (Test-Path -LiteralPath $TemplateLockFile)) {
+        throw "Template lock file missing: $TemplateLockFile. Recreate it intentionally before running preview/send."
+    }
+
+    $lockRaw = Get-Content -LiteralPath $TemplateLockFile -Raw
+    if ([string]::IsNullOrWhiteSpace($lockRaw)) {
+        throw "Template lock file is empty: $TemplateLockFile"
+    }
+
+    $lock = $lockRaw | ConvertFrom-Json
+    if (-not $lock -or -not $lock.sha256) {
+        throw "Template lock file is invalid: $TemplateLockFile"
+    }
+
+    $digest = Get-TemplateDigest -TemplateFile $TemplateFile
+    if ([string]$lock.sha256 -ne [string]$digest.sha256) {
+        throw "Template integrity violation: email-template.md does not match locked hash. Aborting preview/send."
+    }
+
+    $templateItem = Get-Item -LiteralPath $TemplateFile
+    if (-not ($templateItem.Attributes -band [System.IO.FileAttributes]::ReadOnly)) {
+        throw "Template protection violation: email-template.md must be read-only."
+    }
+}
+
 function Get-PersonFirstName {
     param(
         [string]$PersonName
@@ -134,6 +189,18 @@ function Test-IsTemplatePendingValue {
     return ([string]$Value).Trim().ToUpperInvariant() -eq "TEMPLATE_PENDING"
 }
 
+function Normalize-TemplateText {
+    param(
+        [string]$Value
+    )
+
+    if ($null -eq $Value) {
+        return ""
+    }
+
+    return ([string]$Value) -replace "`r", ""
+}
+
 function Apply-EmailTemplateToBatchFile {
     param(
         [Parameter(Mandatory = $true)]
@@ -161,14 +228,20 @@ function Apply-EmailTemplateToBatchFile {
         $subjectNeedsTemplate = Test-IsTemplatePendingValue -Value $currentSubject
         $bodyNeedsTemplate = Test-IsTemplatePendingValue -Value $currentBody
 
-        # Only fill placeholders/missing values. Never overwrite authored copy.
+        # Enforce template lock: custom authored copy is rejected.
         if ($subjectNeedsTemplate) {
             $item.subject = $expectedSubject
             $changed = $true
         }
+        elseif ((Normalize-TemplateText -Value $currentSubject) -ne (Normalize-TemplateText -Value $expectedSubject)) {
+            throw "Template lock violation: subject must stay template-derived for '$([string]$item.companyName)' <$([string]$item.email)>."
+        }
         if ($bodyNeedsTemplate) {
             $item.body = $expectedBody
             $changed = $true
+        }
+        elseif ((Normalize-TemplateText -Value $currentBody) -ne (Normalize-TemplateText -Value $expectedBody)) {
+            throw "Template lock violation: body must stay template-derived for '$([string]$item.companyName)' <$([string]$item.email)>."
         }
     }
 
@@ -407,6 +480,7 @@ if (-not (Test-Path -LiteralPath $ResolvedBatchFile)) {
     throw "Batch file not found: $ResolvedBatchFile"
 }
 
+Assert-TemplateIntegrity -TemplateFile $TemplatePath -TemplateLockFile $TemplateLockPath
 Apply-EmailTemplateToBatchFile -BatchPath $ResolvedBatchFile -TemplateFile $TemplatePath
 
 switch ($Mode) {

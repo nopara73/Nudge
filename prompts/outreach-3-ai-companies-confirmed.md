@@ -16,6 +16,8 @@ Context:
   - scripts/gws-personal-gmail.ps1
 - AI outreach runner is:
   - scripts/ai-outreach-run.ps1
+- Template guard utility is:
+  - scripts/ai-outreach-template-guard.ps1
 - AI outreach tracker utility is:
   - scripts/ai_outreach_tracker.py
 - AI outreach pool/batch prep helper is:
@@ -24,11 +26,15 @@ Context:
   - .local/ai-outreach/current-batch.json
 - Use the local email template at:
   - .local/ai-outreach/email-template.md
+- Template lock file is:
+  - .local/ai-outreach/email-template.lock.json
 - Tracker DB is repo-local and should stay uncommitted:
   - .local/ai-outreach/ai-outreach.db
 - Do not commit anything.
 - Do not print secrets/tokens.
-- Final email style is not fully locked yet, so keep the draft clean, professional, and concise.
+- NEVER modify or replace the template file.
+- NEVER clear the template file.
+- NEVER write custom email copy directly into batch subject/body.
 
 Selection rules:
 
@@ -88,18 +94,23 @@ Batch JSON requirements:
 Execution steps:
 
 1. First attempt to reuse existing lead pool and avoid fresh web research:
+  - powershell -NoProfile -ExecutionPolicy Bypass -File "scripts/ai-outreach-template-guard.ps1" -Mode verify
+  - If verification fails, STOP and report "Template integrity check failed." Do not proceed.
   - powershell -NoProfile -ExecutionPolicy Bypass -File "scripts/ai-outreach-prepare.ps1" -BatchFile ".local/ai-outreach/current-batch.json"
   - If output says eligible=true with 3 selected, skip directly to preview step below.
   - If output says needsResearch=true (or selectedCount < 3), only then do fresh web research.
 2. Research live on the web and identify additional candidate companies only when needed.
 3. Gather a public email for one contact at each chosen company.
-4. Draft final subject/body for each using .local/ai-outreach/email-template.md.
-  - Personalize placeholders per candidate.
-  - If the template file is missing, use a concise professional fallback.
+4. Subject/body must be template-only:
+  - Set each item's `subject` and `body` in batch JSON to `TEMPLATE_PENDING`.
+  - Let `scripts/ai-outreach-run.ps1` apply template placeholders (`{companyName}`, `{personFirstName}`) during preview/send.
+  - No fallback template and no hand-authored rewrites are allowed.
 5. Write the batch JSON file to .local/ai-outreach/current-batch.json
 6. Add newly discovered leads to the persistent pool so future runs can reuse them:
   - py -3 "scripts/ai_outreach_tracker.py" --db-path ".local/ai-outreach/ai-outreach.db" add-leads --leads-file ".local/ai-outreach/current-batch.json"
 7. Run:
+  - powershell -NoProfile -ExecutionPolicy Bypass -File "scripts/ai-outreach-template-guard.ps1" -Mode verify
+  - If verification fails, STOP and report "Template integrity check failed." Do not proceed.
   - powershell -NoProfile -ExecutionPolicy Bypass -File "scripts/ai-outreach-run.ps1" -Mode preview -BatchFile ".local/ai-outreach/current-batch.json"
 8. If preview says the batch is invalid or ineligible:
   - fix the candidates
@@ -113,6 +124,8 @@ Execution steps:
   - return "Cancelled before send."
 11. If answer is explicit yes:
   - run:
+  powershell -NoProfile -ExecutionPolicy Bypass -File "scripts/ai-outreach-template-guard.ps1" -Mode verify
+  - If verification fails, STOP and report "Template integrity check failed." Do not proceed.
   powershell -NoProfile -ExecutionPolicy Bypass -File "scripts/ai-outreach-run.ps1" -Mode send-confirmed -BatchFile ".local/ai-outreach/current-batch.json" -ApprovalToken "yes"
 12. If one send fails, continue with the remaining sends and clearly report partial success/failure.
 
