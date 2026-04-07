@@ -327,15 +327,10 @@ function Invoke-GmailSend {
             "-BodyFile", $tempBody
         )
 
-        $process = Start-Process -FilePath "powershell" `
-            -ArgumentList $argList `
-            -Wait `
-            -PassThru `
-            -NoNewWindow `
-            -RedirectStandardOutput $tempOut `
-            -RedirectStandardError $tempErr
-
-        $sendExitCode = [int]$process.ExitCode
+        # Invoke directly with splatted args so values like subject lines
+        # are preserved as single arguments (no token truncation on spaces).
+        & powershell @argList 1> $tempOut 2> $tempErr
+        $sendExitCode = [int]$LASTEXITCODE
 
         $stdout = if (Test-Path -LiteralPath $tempOut) {
             Get-Content -LiteralPath $tempOut -Raw
