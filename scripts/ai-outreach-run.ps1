@@ -309,6 +309,8 @@ function Invoke-GmailSend {
     $tempErr = Join-Path $ArtifactsDir "gmail-send-$([guid]::NewGuid().ToString('N')).err.log"
     $tempBody = Join-Path $ArtifactsDir "gmail-send-$([guid]::NewGuid().ToString('N')).body.txt"
     $sendExitCode = 1
+    $stdout = ""
+    $stderr = ""
     $text = ""
 
     try {
@@ -327,10 +329,11 @@ function Invoke-GmailSend {
             "-BodyFile", $tempBody
         )
 
-        # Invoke directly with splatted args so values like subject lines
-        # are preserved as single arguments (no token truncation on spaces).
-        & powershell @argList 1> $tempOut 2> $tempErr
-        $sendExitCode = [int]$LASTEXITCODE
+        # Use Start-Process so informational stderr lines from tooling
+        # (for example keyring backend notices) do not raise terminating
+        # NativeCommandError in pwsh when exit code is still 0.
+        $proc = Start-Process -FilePath "powershell" -ArgumentList $argList -NoNewWindow -Wait -PassThru -RedirectStandardOutput $tempOut -RedirectStandardError $tempErr
+        $sendExitCode = [int]$proc.ExitCode
 
         $stdout = if (Test-Path -LiteralPath $tempOut) {
             Get-Content -LiteralPath $tempOut -Raw
@@ -351,6 +354,35 @@ function Invoke-GmailSend {
     }
 
     if ($sendExitCode -ne 0) {
+        # If stdout already contains a Gmail message resource (id/threadId),
+        # treat this as sent and surface stderr as diagnostic context.
+        $stdoutJson = $null
+        if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+            try {
+                $stdoutJson = $stdout | ConvertFrom-Json
+            }
+            catch {
+                $stdoutJson = $null
+            }
+        }
+
+        if (
+            $null -ne $stdoutJson -and
+            $stdoutJson.PSObject.Properties.Name -contains "id" -and
+            -not [string]::IsNullOrWhiteSpace([string]$stdoutJson.id)
+        ) {
+            return [pscustomobject]@{
+                email = $Item.email
+                status = "sent"
+                gmailResult = [pscustomobject]@{
+                    id = [string]$stdoutJson.id
+                    threadId = [string]$stdoutJson.threadId
+                    warning = "Non-zero wrapper exit code with valid Gmail response."
+                    rawOutput = $text
+                }
+            }
+        }
+
         return @{
             email = $Item.email
             status = "failed"
@@ -358,12 +390,24 @@ function Invoke-GmailSend {
         }
     }
 
-    try {
-        $json = $text | ConvertFrom-Json
+    # Prefer parsing stdout since stderr may contain non-JSON diagnostics.
+    $json = $null
+    if (-not [string]::IsNullOrWhiteSpace($stdout)) {
+        try {
+            $json = $stdout | ConvertFrom-Json
+        }
+        catch {
+            $json = $null
+        }
     }
-    catch {
-        $json = [pscustomobject]@{
-            rawOutput = $text
+    if ($null -eq $json) {
+        try {
+            $json = $text | ConvertFrom-Json
+        }
+        catch {
+            $json = [pscustomobject]@{
+                rawOutput = $text
+            }
         }
     }
 
@@ -535,6 +579,21 @@ switch ($Mode) {
                         previousSubject = $existingSentForEmail[0].subject
                         reason = "Idempotency guard reused prior send for same recipient."
                     }
+                }
+                continue
+            }
+
+            $existingPendingForFingerprint = @($ledger.entries | Where-Object {
+                $_.status -eq "pending" -and
+                ([string]$_.fingerprint) -eq $fingerprint -and
+                ([string]$_.email) -eq $itemEmail
+            } | Select-Object -Last 1)
+
+            if ($existingPendingForFingerprint.Count -gt 0) {
+                $sendResults += [pscustomobject]@{
+                    email = $item.email
+                    status = "skipped"
+                    error = "Blocked by idempotency guard: unresolved pending send exists for this exact message fingerprint."
                 }
                 continue
             }
