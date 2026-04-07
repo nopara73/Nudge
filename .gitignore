@@ -55,6 +55,7 @@ packages/
 # Dotnet local tools and environment
 .dotnet/
 .local/
+.local/ai-outreach/
 
 # Rider / ReSharper
 _ReSharper*/

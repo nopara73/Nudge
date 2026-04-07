@@ -5,6 +5,7 @@ param(
     [string]$To,
     [string]$Subject = "Nudge test email",
     [string]$Body = "Sent from gws in this repo.",
+    [string]$BodyFile,
     [string[]]$PassThruArgs
 )
 
@@ -77,6 +78,13 @@ Alternative:
     "send-test" {
         if ([string]::IsNullOrWhiteSpace($To)) {
             throw "Provide -To for send-test."
+        }
+
+        if (-not [string]::IsNullOrWhiteSpace($BodyFile)) {
+            if (-not (Test-Path -LiteralPath $BodyFile)) {
+                throw "BodyFile not found: $BodyFile"
+            }
+            $Body = Get-Content -LiteralPath $BodyFile -Raw
         }
 
         $mime = @"

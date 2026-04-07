@@ -1,0 +1,12 @@
+---
+description: Protect local AI outreach email template from unrequested edits
+alwaysApply: true
+---
+
+# Do Not Edit Outreach Template Without Explicit User Request
+
+- Treat `.local/ai-outreach/email-template.md` as protected.
+- Do not create, modify, or reformat this file unless the user explicitly asks to change this exact file in the current request.
+- If a task would normally involve updating templates, skip this file and proceed with other required changes.
+- If uncertain, ask before touching it.
+
